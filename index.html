@@ -821,7 +821,7 @@ scene.add(xwing);
 const turrets = [];
 
 // proper Death Star turbolaser tower: tiered base + rotating twin-barrel head
-function makeTurret(kind = 0) {
+function makeTurret(kind = 0, isSurface = false) {
   const g = new THREE.Group();
   const heavy = kind === 1;
 
@@ -877,12 +877,13 @@ function makeTurret(kind = 0) {
   optimizeStatic(base);
   optimizeStatic(head);
 
-  // glowing red targeting eye (added AFTER merge so it keeps its own material)
-  // sits proud on the front of the head so it isn't occluded - makes turrets
-  // instantly readable as threats against the blueprint blue
-  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
-  eye.position.set(0, 0.45, -1.35);
-  head.add(eye);
+  // glowing red targeting eye - only on the wall threats (rim turrets fire into space,
+  // so an eye there just reads as a stuck red bolt). Added after merge to keep its material.
+  if (!isSurface) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
+    eye.position.set(0, 0.45, -1.35);
+    head.add(eye);
+  }
 
   // imposing turbolasers (20% smaller than before)
   const scale = 2.24;
@@ -928,7 +929,7 @@ function seedTurrets() {
 // ---------- surface turbolasers on the trench rim, firing off into space ----------
 const surfaceTurrets = [];
 function spawnSurfaceTurret(zPos, side) {
-  const t = makeTurret(Math.random() < 0.4 ? 1 : 0);
+  const t = makeTurret(Math.random() < 0.4 ? 1 : 0, true);   // no red eye on rim turrets
   t.scale.setScalar(1.8);                                   // a touch smaller than the wall threats
   t.position.set(side * (TRENCH_W / 2 - 0.3), TRENCH_H / 2, zPos);   // stand upright on the rim
   t.userData.side = side;
@@ -938,17 +939,22 @@ function spawnSurfaceTurret(zPos, side) {
   surfaceTurrets.push(t);
 }
 function fireSurfaceTurret(t, aimWorld) {
+  sfxTurretLaser();
   const muzzle = new THREE.Vector3(0, 0, -3.3);
   t.userData.head.localToWorld(muzzle);
   const dir = new THREE.Vector3().subVectors(aimWorld, muzzle).normalize();
-  const color = 0x33ff66;                                   // green turbolaser bolts into space
-  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(11)]);
-  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, fog: false }));
-  line.position.copy(muzzle);
-  line.userData.vel = dir.multiplyScalar(3.4);   // slower so the bolt is visibly seen arcing into space
-  line.userData.life = 2.2;
-  scene.add(line);
-  skyLasers.push(line);
+  // fat bright green bolt so it clearly reads as turbolaser fire into space
+  const bolt = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.28, 0.28, 3.2, 6),
+    new THREE.MeshBasicMaterial({ color: 0x33ff66, fog: false })
+  );
+  bolt.position.copy(muzzle);
+  bolt.lookAt(muzzle.clone().add(dir));
+  bolt.rotateX(Math.PI / 2);
+  bolt.userData.vel = dir.multiplyScalar(3.4);   // arcs visibly into space
+  bolt.userData.life = 2.2;
+  scene.add(bolt);
+  skyLasers.push(bolt);
 }
 
 // ---------- projectiles ----------
