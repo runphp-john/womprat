@@ -438,57 +438,70 @@ scene.add(stars);
 const sdMat = new THREE.LineBasicMaterial({ color: 0x8fb6e6, fog: false, transparent: true, opacity: 0.8 });
 function sdLines(geom) { return new THREE.LineSegments(new THREE.EdgesGeometry(geom), sdMat); }
 
+function sdLine(a, b) { return new THREE.Line(new THREE.BufferGeometry().setFromPoints([a, b]), sdMat); }
 function makeStarDestroyer() {
   const g = new THREE.Group();
-  const L = 170, HW = 48, TH = 16;        // length, half-width at stern, hull height
+  const L = 280, HW = 46, TH = 22;        // long narrow dagger (~3:1), tall stern
 
   // dagger hull: bow point -> stern rectangle (faceted wedge)
   const bow = [0, 0, -L];
   const sbl = [-HW, 0, 0], sbr = [HW, 0, 0];     // stern bottom
   const stl = [-HW, TH, 0], str = [HW, TH, 0];   // stern top
   const tri = (a, b, c) => [...a, ...b, ...c];
-  const pos = [
+  const hull = new THREE.BufferGeometry();
+  hull.setAttribute("position", new THREE.Float32BufferAttribute([
     ...tri(bow, stl, str),                        // top deck
     ...tri(bow, sbr, sbl),                        // bottom
     ...tri(bow, sbl, stl),                        // left flank
     ...tri(bow, str, sbr),                        // right flank
     ...tri(sbl, sbr, str), ...tri(sbl, str, stl), // stern face
-  ];
-  const hull = new THREE.BufferGeometry();
-  hull.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  ], 3));
   g.add(sdLines(hull));
 
-  // a couple of longitudinal deck lines for detail
-  for (const ox of [-HW * 0.45, 0, HW * 0.45]) {
-    const ln = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(ox * 0.15, TH * 0.55, -L * 0.55),
-      new THREE.Vector3(ox, TH, -2),
-    ]);
-    g.add(new THREE.Line(ln, sdMat));
+  // longitudinal trench lines down the top deck, converging toward the bow
+  for (const t of [-0.72, -0.4, 0.4, 0.72]) {
+    g.add(sdLine(new THREE.Vector3(HW * t * 0.06, TH * 0.55, -L * 0.92),
+                 new THREE.Vector3(HW * t,        TH,        -4)));
+  }
+  // lateral deck ribs
+  for (const zf of [0.22, 0.42, 0.62, 0.82]) {
+    const w = HW * (1 - zf * 0.95), y = TH * (1 - zf * 0.45);
+    g.add(sdLine(new THREE.Vector3(-w, y, -L * zf), new THREE.Vector3(w, y, -L * zf)));
+  }
+  // central dorsal ridge
+  g.add(sdLine(new THREE.Vector3(0, TH * 0.6, -L * 0.9), new THREE.Vector3(0, TH + 1, -2)));
+
+  // stepped superstructure "city" block - two tiers
+  const sup1 = sdLines(new THREE.BoxGeometry(HW * 0.8, 9, L * 0.32));
+  sup1.position.set(0, TH + 4.5, -L * 0.13); g.add(sup1);
+  const sup2 = sdLines(new THREE.BoxGeometry(HW * 0.52, 8, L * 0.2));
+  sup2.position.set(0, TH + 12, -L * 0.11); g.add(sup2);
+
+  // bridge tower on a neck + twin shield domes
+  const neck = sdLines(new THREE.BoxGeometry(HW * 0.2, 7, HW * 0.2));
+  neck.position.set(0, TH + 16, -L * 0.07); g.add(neck);
+  const tower = sdLines(new THREE.BoxGeometry(HW * 0.42, 6, HW * 0.46));
+  tower.position.set(0, TH + 20, -L * 0.07); g.add(tower);
+  for (const ox of [-HW * 0.12, HW * 0.12]) {
+    const dome = sdLines(new THREE.SphereGeometry(3.0, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2));
+    dome.position.set(ox, TH + 23.5, -L * 0.06); g.add(dome);
   }
 
-  // stepped superstructure near the stern
-  const sup = sdLines(new THREE.BoxGeometry(HW * 0.72, 7, L * 0.26));
-  sup.position.set(0, TH + 3.5, -L * 0.13);
-  g.add(sup);
-
-  // command tower + twin bridge domes
-  const tower = sdLines(new THREE.BoxGeometry(HW * 0.34, 8, HW * 0.4));
-  tower.position.set(0, TH + 11, -L * 0.05);
-  g.add(tower);
-  for (const ox of [-HW * 0.1, HW * 0.1]) {
-    const dome = sdLines(new THREE.SphereGeometry(2.6, 8, 5, 0, Math.PI * 2, 0, Math.PI / 2));
-    dome.position.set(ox, TH + 15.5, -L * 0.03);
-    g.add(dome);
+  // three engine glow discs on the stern face
+  for (const ox of [-HW * 0.5, 0, HW * 0.5]) {
+    const e = new THREE.Mesh(new THREE.CircleGeometry(HW * 0.16, 16),
+      new THREE.MeshBasicMaterial({ color: 0x9fd0ff, transparent: true, opacity: 0.85, fog: false }));
+    e.position.set(ox, TH * 0.45, 0.5);
+    g.add(e);
   }
 
   return g;
 }
 
-// a fleet of three Star Destroyers at varied ranges
+// two Star Destroyers spread across the sky
 const sdFleet = [
-  { pos: [-290,  55, -360], rot: [0.05,  0.7, 0.05], s: 1.3 },   // left
-  { pos: [ 330, 130, -620], rot: [0.03, -0.85, -0.05], s: 2.1 }, // right, higher, deeper (within far plane)
+  { pos: [-280,  60, -380], rot: [0.05,  0.6, 0.05], s: 1.5 },   // left
+  { pos: [ 340, 140, -640], rot: [0.03, -0.85, -0.05], s: 2.2 }, // right, higher, deeper
 ];
 for (const f of sdFleet) {
   const sd = makeStarDestroyer();
@@ -1109,7 +1122,7 @@ for (let i = 0; i < 30; i++) spawnStreak();
 
 // ---------- state ----------
 const state = {
-  speed: 1.6,
+  speed: 1.92,        // +20% base speed
   boostMul: 1.0,
   score: 0,
   shields: 100,
