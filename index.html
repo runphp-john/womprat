@@ -18,7 +18,8 @@
   #hud .bar > i { display: block; height: 100%; width: 100%; background: #bfe0ff; transition: width .12s linear; }
   #dmgflash {
     position: fixed; inset: 0; pointer-events: none; z-index: 8; opacity: 0;
-    box-shadow: inset 0 0 140px 50px rgba(255, 45, 45, 0.75);
+    border: 5px solid rgba(255, 50, 50, 0.95);
+    box-shadow: inset 0 0 22px 3px rgba(255, 45, 45, 0.55);
     transition: opacity .1s linear;
   }
   #center {
@@ -830,37 +831,77 @@ function makeXWing() {
   r2dome.position.set(0, 0.42, 0.5);
   g.add(r2dome);
 
-  // engines - chunky 2x2 cluster at rear with detailed turbine intakes
-  const engineGeo = new THREE.CylinderGeometry(0.32, 0.30, 1.6, 12);
+  // engines - chunky 2x2 cluster at rear with detailed glowing turbine nozzles
+  const engineGeo = new THREE.CylinderGeometry(0.34, 0.30, 1.7, 14);
   const ePos = [
     [-0.52,  0.52, 1.55],
     [ 0.52,  0.52, 1.55],
     [-0.52, -0.52, 1.55],
     [ 0.52, -0.52, 1.55],
   ];
+  const engineGlows = [];
   for (const [x, y, z] of ePos) {
     const e = edges(engineGeo, M);
     e.rotation.x = Math.PI / 2;
     e.position.set(x, y, z);
     g.add(e);
-    // concentric turbine intake rings at the front (wireframe so the bore stays open)
-    for (const rr of [0.3, 0.21, 0.12]) {
-      const ring = wire(new THREE.TorusGeometry(rr, 0.022, 4, 16), M);
-      ring.position.set(x, y, z - 0.82);
+
+    // panel bands around the nacelle body (greeble detail)
+    for (const pz of [z - 0.45, z, z + 0.45]) {
+      const band = wire(new THREE.TorusGeometry(0.335, 0.018, 4, 16), M);
+      band.position.set(x, y, pz);
+      g.add(band);
+    }
+    // intake cowl + bore rings at the front (nose side)
+    const cowl = edges(new THREE.CylinderGeometry(0.30, 0.34, 0.26, 14), M);
+    cowl.rotation.x = Math.PI / 2;
+    cowl.position.set(x, y, z - 0.95);
+    g.add(cowl);
+    for (const rr of [0.25, 0.16, 0.08]) {
+      const ring = wire(new THREE.TorusGeometry(rr, 0.02, 4, 16), M);
+      ring.position.set(x, y, z - 1.02);
       g.add(ring);
     }
-    // exhaust glow at rear
-    const glow = new THREE.Mesh(new THREE.CircleGeometry(0.24, 14), new THREE.MeshBasicMaterial({ color: 0xff5522 }));
-    glow.position.set(x, y, z + 0.81);
-    g.add(glow);
-    // engine glow trail (line streaming back)
+
+    // ---- rear glowing exhaust nozzle (the bit the player stares at) ----
+    // sits just PROUD of the nacelle's solid rear cap (local z+0.85) so the
+    // cap can't occlude it - the dark cap becomes the glow's backing instead.
+    const zr = z + 0.86;
+    // wireframe nozzle lip (no solid fill, so nothing hides the glow)
+    const rim = wire(new THREE.TorusGeometry(0.31, 0.03, 6, 18), M);
+    rim.position.set(x, y, zr + 0.12);
+    g.add(rim);
+    // stacked glow discs against the dark cap: deep red -> orange -> hot core
+    const disc = (r, col, dz) => {
+      const m = new THREE.Mesh(new THREE.CircleGeometry(r, 18),
+        new THREE.MeshBasicMaterial({ color: col }));
+      m.position.set(x, y, zr + dz);
+      g.add(m); return m;
+    };
+    disc(0.28, 0xff463c, 0.02);                // deep red base (palette red)
+    disc(0.19, 0xff8c46, 0.06);                // orange mid (palette orange)
+    const core = disc(0.10, 0xffe0c0, 0.10);   // white-hot core
+    // turbine vanes across the glow (thin spokes)
+    const spokePts = [], NV = 10;
+    for (let i = 0; i < NV; i++) {
+      const a = (i / NV) * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
+      spokePts.push(
+        new THREE.Vector3(x + c * 0.07, y + s * 0.07, zr + 0.08),
+        new THREE.Vector3(x + c * 0.27, y + s * 0.27, zr + 0.08),
+      );
+    }
+    g.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(spokePts), M));
+    engineGlows.push(core);
+
+    // exhaust glow trail streaming back
     const trailGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(x, y, z + 0.82),
-      new THREE.Vector3(x, y, z + 3.8),
+      new THREE.Vector3(x, y, zr + 0.12),
+      new THREE.Vector3(x, y, z + 3.9),
     ]);
     const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: 0xff7733, transparent: true, opacity: 0.5 }));
     g.add(trail);
   }
+  g.userData.engineGlows = engineGlows;
 
   // wings - 4 in X arrangement
   const cannonTips = [];
@@ -1478,6 +1519,12 @@ function update(dt) {
   const boosting = keys["ShiftLeft"] || keys["ShiftRight"];
   state.boostMul = boosting ? 2.2 : 1.0;
   setEngineBoost(boosting);
+  // engine cores flare on boost, with a subtle idle flicker
+  if (xwing.userData.engineGlows) {
+    const tgt = (boosting ? 1.7 : 1.0) * (0.9 + Math.random() * 0.2);
+    for (const c of xwing.userData.engineGlows)
+      c.scale.x = c.scale.y = THREE.MathUtils.lerp(c.scale.x, tgt, 0.25);
+  }
   // FOV pulse on boost
   const targetFov = boosting ? BASE_FOV + 12 : BASE_FOV;
   camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.12);
