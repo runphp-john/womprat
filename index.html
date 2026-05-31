@@ -54,6 +54,7 @@
   <p>SPACE &nbsp; FIRE</p>
   <p>SHIFT &nbsp; BOOST</p>
   <p>E &nbsp; R2 EMP (clears all turrets)</p>
+  <p>M &nbsp; MUTE</p>
   <p class="blink" style="margin-top:18px">PRESS ANY KEY TO LAUNCH</p>
 </div>
 
@@ -184,6 +185,101 @@ scene.add(sun);
 const rimLight = new THREE.DirectionalLight(0x244a78, 0.5);
 rimLight.position.set(-0.6, 0.15, -0.5);
 scene.add(rimLight);
+
+// ---------- audio: Web Audio synthesis (no external/copyright assets) ----------
+// Evokes the originals: blasters = downward "twang" sweep (Ben Burtt's radio-tower
+// guy-wire), TIE = wailing vibrato scream, explosions = filtered noise + low boom,
+// X-wing = filtered jet-engine hum that opens up on boost.
+let actx = null, masterGain = null, engine = null, audioOn = true;
+function initAudio() {
+  if (actx) return;
+  try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+  masterGain = actx.createGain();
+  masterGain.gain.value = 0.45;
+  masterGain.connect(actx.destination);
+}
+function resumeAudio() { if (actx && actx.state === "suspended") actx.resume(); }
+function noiseBuffer(dur) {
+  const n = Math.max(1, Math.floor(actx.sampleRate * dur));
+  const buf = actx.createBuffer(1, n, actx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  return buf;
+}
+// downward "twang" - the blaster family
+function sfxBlaster(f0, f1, dur, vol, type) {
+  if (!actx || !audioOn) return;
+  const t = actx.currentTime;
+  const o = actx.createOscillator();
+  o.type = type || "square";
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  const flt = actx.createBiquadFilter();
+  flt.type = "bandpass"; flt.frequency.value = f0 * 0.6; flt.Q.value = 6;   // metallic ring
+  const g = actx.createGain();
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(flt); flt.connect(g); g.connect(masterGain);
+  o.start(t); o.stop(t + dur + 0.02);
+}
+const sfxPlayerLaser = () => sfxBlaster(1500, 240, 0.14, 0.16, "square");
+const sfxTurretLaser = () => sfxBlaster(820, 150, 0.22, 0.10, "sawtooth");
+const sfxTieLaser    = () => sfxBlaster(2000, 360, 0.12, 0.10, "square");
+function sfxExplosion(big) {
+  if (!actx || !audioOn) return;
+  const t = actx.currentTime, dur = big ? 0.85 : 0.42;
+  const src = actx.createBufferSource(); src.buffer = noiseBuffer(dur);
+  const flt = actx.createBiquadFilter(); flt.type = "lowpass";
+  flt.frequency.setValueAtTime(big ? 2000 : 1300, t);
+  flt.frequency.exponentialRampToValueAtTime(110, t + dur);
+  const g = actx.createGain();
+  g.gain.setValueAtTime(big ? 0.5 : 0.32, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(flt); flt.connect(g); g.connect(masterGain);
+  src.start(t); src.stop(t + dur);
+  const o = actx.createOscillator(), og = actx.createGain();
+  o.type = "sine"; o.frequency.setValueAtTime(big ? 95 : 130, t);
+  o.frequency.exponentialRampToValueAtTime(40, t + dur);
+  og.gain.setValueAtTime(big ? 0.5 : 0.28, t);
+  og.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(og); og.connect(masterGain);
+  o.start(t); o.stop(t + dur);
+}
+function sfxTieScream() {
+  if (!actx || !audioOn) return;
+  const t = actx.currentTime, dur = 1.0;
+  const o = actx.createOscillator(); o.type = "sawtooth";
+  o.frequency.setValueAtTime(620, t);
+  o.frequency.linearRampToValueAtTime(880, t + 0.25);
+  o.frequency.linearRampToValueAtTime(500, t + dur);
+  const lfo = actx.createOscillator(); lfo.frequency.value = 16;
+  const lfoG = actx.createGain(); lfoG.gain.value = 70;
+  lfo.connect(lfoG); lfoG.connect(o.frequency);                 // vibrato wail
+  const flt = actx.createBiquadFilter(); flt.type = "bandpass"; flt.frequency.value = 1300; flt.Q.value = 5;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.09, t + 0.12);
+  g.gain.linearRampToValueAtTime(0.0001, t + dur);
+  o.connect(flt); flt.connect(g); g.connect(masterGain);
+  o.start(t); lfo.start(t); o.stop(t + dur); lfo.stop(t + dur);
+}
+function startEngine() {
+  if (!actx || engine) return;
+  const o = actx.createOscillator(); o.type = "sawtooth"; o.frequency.value = 68;
+  const o2 = actx.createOscillator(); o2.type = "sine"; o2.frequency.value = 102;
+  const flt = actx.createBiquadFilter(); flt.type = "lowpass"; flt.frequency.value = 300;
+  const g = actx.createGain(); g.gain.value = 0.0;
+  o.connect(flt); o2.connect(flt); flt.connect(g); g.connect(masterGain);
+  o.start(); o2.start();
+  g.gain.linearRampToValueAtTime(0.05, actx.currentTime + 0.6);
+  engine = { o, o2, flt, g };
+}
+function setEngineBoost(boost) {
+  if (!engine || !actx) return;
+  const t = actx.currentTime;
+  engine.flt.frequency.linearRampToValueAtTime(boost ? 560 : 300, t + 0.15);
+  engine.g.gain.linearRampToValueAtTime(boost ? 0.085 : 0.05, t + 0.15);
+}
 
 // a "part" = shaded solid fill + bright wireframe edges on top
 function edges(geom, mat = wireMat) {
@@ -490,10 +586,11 @@ function makeStarDestroyer() {
   return g;
 }
 
-// two Star Destroyers at distinct headings (banked / yawed differently)
+// two Star Destroyers, bows pitched DOWN toward the Death Star surface (negative pitch),
+// at different yaws so one dives in and one runs alongside
 const sdFleet = [
-  { pos: [-300,  65, -440], rot: [ 0.10,  1.15, -0.22], s: 1.6 },  // left, banking, three-quarter
-  { pos: [ 340, 140, -600], rot: [-0.12, -1.70,  0.26], s: 2.2 },  // right, banking the other way, near broadside
+  { pos: [-270,  80, -470], rot: [-0.5,  0.45, 0.06], s: 1.6 },  // left, diving toward the surface
+  { pos: [ 330, 130, -600], rot: [-0.32, -0.8, -0.12], s: 2.2 }, // right, angling in alongside
 ];
 for (const f of sdFleet) {
   const sd = makeStarDestroyer();
@@ -910,6 +1007,7 @@ function findTarget(origin) {
 }
 
 function fireFromXwing() {
+  sfxPlayerLaser();
   const target = findTarget(xwing.position);
   const pairs = [[0, 1], [2, 3]];
   const pair = pairs[fireFromXwing.idx ^= 1];
@@ -935,6 +1033,7 @@ function fireFromXwing() {
 fireFromXwing.idx = 0;
 
 function fireFromTurret(t) {
+  sfxTurretLaser();
   const muzzle = new THREE.Vector3(0, 0, -3.3);   // barrel tip in head-local space
   t.userData.head.localToWorld(muzzle);
   const dir = new THREE.Vector3().subVectors(xwing.position, muzzle).normalize();
@@ -1012,6 +1111,7 @@ function spawnTrenchTie() {
   t.userData.isTie = true;
   t.userData.hitR = 2.0;
   t.userData.mode = "trench";
+  sfxTieScream();
   scene.add(t);
   trenchTies.push(t);
 }
@@ -1031,10 +1131,12 @@ function spawnStrafer() {
   t.userData.isTie = true;
   t.userData.hitR = 2.1;
   t.userData.mode = "strafe";
+  sfxTieScream();
   scene.add(t);
   trenchTies.push(t);
 }
 function fireFromTie(t) {
+  sfxTieLaser();
   const muzzle = t.position.clone();
   const dir = new THREE.Vector3().subVectors(xwing.position, muzzle).normalize();
   const shot = makeLaser(0x33ff66, 0xaaffcc);   // TIE green
@@ -1062,6 +1164,7 @@ function empWave(pos) {
 function fireEMP() {
   if (!state.started || !state.alive || state.emps <= 0) return;
   state.emps -= 1;
+  sfxExplosion(true);
   empWave(xwing.position.clone());
   for (let j = turrets.length - 1; j >= 0; j--) {
     const t = turrets[j];
@@ -1132,11 +1235,14 @@ const state = {
 const keys = {};
 window.addEventListener("keydown", (e) => {
   keys[e.code] = true;
+  initAudio(); resumeAudio();                             // unlock audio on first real keypress
   if (!state.started) {
     state.started = true;
     document.getElementById("center").classList.add("hidden");
     seedTurrets();
+    startEngine();
   }
+  if (e.code === "KeyM" && !e.repeat) { audioOn = !audioOn; if (masterGain) masterGain.gain.value = audioOn ? 0.45 : 0; }
   if (e.code === "KeyE" && !e.repeat) fireEMP();          // R2 EMP burst
   if (state.started && !state.alive && e.code === "Space") restart();
 });
@@ -1180,6 +1286,7 @@ function restart() {
   }
   state.score = 0; state.shields = 100; state.dist = 0; state.alive = true;
   state.emps = 3; state.nextTieDist = 700; state.nextStrafeDist = 1100; state.nextSurfaceDist = 130;
+  if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.05, actx.currentTime + 0.4);  // engine back up
   xwing.position.set(0, 0, 3);
   xwing.visible = true;
   document.getElementById("center").classList.add("hidden");
@@ -1210,6 +1317,7 @@ function update(dt) {
   // boost
   const boosting = keys["ShiftLeft"] || keys["ShiftRight"];
   state.boostMul = boosting ? 2.2 : 1.0;
+  setEngineBoost(boosting);
   // FOV pulse on boost
   const targetFov = boosting ? BASE_FOV + 12 : BASE_FOV;
   camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.12);
@@ -1309,6 +1417,7 @@ function update(dt) {
     tie.lookAt(xwing.position);
     if (tie.position.distanceTo(xwing.position) < 2.4) {          // rammed the player
       explode(tie.position, 0x88d8ff, 26, 1.4);
+      sfxExplosion(false);
       scene.remove(tie); trenchTies.splice(i, 1);
       state.shields -= 22;
       explode(xwing.position, 0xff3344, 8, 1);
@@ -1367,6 +1476,7 @@ function update(dt) {
           // big secondary blast - two staged bursts for a meaty kill
           explode(t.userData.aimWorld, 0xffaa33, 70, 2.6);
           explode(t.userData.aimWorld, 0xff5522, 30, 1.6);
+          sfxExplosion(true);
           scene.remove(t); turrets.splice(j, 1);
           state.score += 100;
         } else {
@@ -1384,6 +1494,7 @@ function update(dt) {
         if (tie.userData.health <= 0) {
           explode(tie.position, 0xffaa33, 42, 1.8);
           explode(tie.position, 0x88d8ff, 16, 1.1);
+          sfxExplosion(false);
           scene.remove(tie); trenchTies.splice(j, 1);
           state.score += 150;
         } else {
@@ -1405,6 +1516,7 @@ function update(dt) {
       scene.remove(s); enemyShots.splice(i, 1);
       state.shields -= 12;
       explode(xwing.position, 0xff3344, 6);
+      sfxExplosion(false);
       if (state.shields <= 0) gameOver();
     }
   }
@@ -1454,6 +1566,8 @@ function update(dt) {
 function gameOver() {
   state.alive = false;
   explode(xwing.position, 0xff3344, 48);
+  sfxExplosion(true);
+  if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.4);  // engine dies
   xwing.visible = false;
   const c = document.getElementById("center");
   c.innerHTML = '<h1>DESTROYED</h1><p>SCORE ' + state.score + '</p><p>DISTANCE ' + (state.dist|0) + ' M</p><p class="blink">PRESS SPACE TO RETRY</p>';
