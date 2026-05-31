@@ -835,6 +835,37 @@ function seedTurrets() {
   turrets.length = 0;
   for (const z of [-55, -125, -195, -265]) spawnTurret(z);
   state.nextTurretDist = state.dist + 260;
+  // line the trench rim with surface turbolasers firing up at the dogfight
+  for (const t of surfaceTurrets) scene.remove(t);
+  surfaceTurrets.length = 0;
+  for (let i = 0; i < 5; i++) spawnSurfaceTurret(-60 - i * 70, i % 2 ? 1 : -1);
+  state.nextSurfaceDist = state.dist + 130;
+}
+
+// ---------- surface turbolasers on the trench rim, firing off into space ----------
+const surfaceTurrets = [];
+function spawnSurfaceTurret(zPos, side) {
+  const t = makeTurret(Math.random() < 0.4 ? 1 : 0);
+  t.scale.setScalar(1.8);                                   // a touch smaller than the wall threats
+  t.position.set(side * (TRENCH_W / 2 - 0.3), TRENCH_H / 2, zPos);   // stand upright on the rim
+  t.userData.side = side;
+  t.userData.fireCool = Math.random() * 2;
+  t.userData.wander = Math.random() * Math.PI * 2;
+  scene.add(t);
+  surfaceTurrets.push(t);
+}
+function fireSurfaceTurret(t, aimWorld) {
+  const muzzle = new THREE.Vector3(0, 0, -3.3);
+  t.userData.head.localToWorld(muzzle);
+  const dir = new THREE.Vector3().subVectors(aimWorld, muzzle).normalize();
+  const color = Math.random() < 0.5 ? 0xff4433 : 0xeef4ff;  // turbolaser bolts up into space
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(9)]);
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, fog: false }));
+  line.position.copy(muzzle);
+  line.userData.vel = dir.multiplyScalar(5);
+  line.userData.life = 1.6;
+  scene.add(line);
+  skyLasers.push(line);
 }
 
 // ---------- projectiles ----------
@@ -978,6 +1009,26 @@ function spawnTrenchTie() {
   t.userData.aimWorld = new THREE.Vector3();
   t.userData.isTie = true;
   t.userData.hitR = 2.0;
+  t.userData.mode = "trench";
+  scene.add(t);
+  trenchTies.push(t);
+}
+// a TIE that dives in from the sky, strafes down across the player, and blasts past
+function spawnStrafer() {
+  const t = makeTrenchTie();
+  t.scale.setScalar(1.15);
+  const sideX = (Math.random() < 0.5 ? -1 : 1) * (18 + Math.random() * 16);
+  t.position.set(sideX, 36 + Math.random() * 24, -150 - Math.random() * 70);
+  // dive toward a point past the player at trench height -> a sweeping strafing run
+  const target = new THREE.Vector3(xwing.position.x * 0.5, 0, 32);
+  t.userData.vel = new THREE.Vector3().subVectors(target, t.position).normalize().multiplyScalar(96); // fast pass, units/sec
+  t.userData.health = 2;
+  t.userData.fireCool = 0.3 + Math.random() * 0.4;
+  t.userData.phase = Math.random() * Math.PI * 2;
+  t.userData.aimWorld = new THREE.Vector3();
+  t.userData.isTie = true;
+  t.userData.hitR = 2.1;
+  t.userData.mode = "strafe";
   scene.add(t);
   trenchTies.push(t);
 }
@@ -1062,7 +1113,9 @@ const state = {
   fireCool: 0,
   nextTurretDist: 260,
   emps: 3,
-  nextTieDist: 700,        // first attacking TIE after a short while
+  nextTieDist: 700,         // first head-on trench TIE
+  nextStrafeDist: 1100,     // first sky strafing run
+  nextSurfaceDist: 130,     // rim turrets firing into space
 };
 
 const keys = {};
@@ -1110,12 +1163,12 @@ function setHUD() {
 }
 
 function restart() {
-  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves]) {
+  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves, surfaceTurrets]) {
     for (const o of arr) scene.remove(o);
     arr.length = 0;
   }
   state.score = 0; state.shields = 100; state.dist = 0; state.alive = true;
-  state.emps = 3; state.nextTieDist = 700;
+  state.emps = 3; state.nextTieDist = 700; state.nextStrafeDist = 1100; state.nextSurfaceDist = 130;
   xwing.position.set(0, 0, 3);
   xwing.visible = true;
   document.getElementById("center").classList.add("hidden");
@@ -1184,6 +1237,18 @@ function update(dt) {
     state.nextTieDist = state.dist + 900 + Math.random() * 700;
   }
 
+  // occasional TIE diving in from the sky for a strafing run
+  if (state.dist >= state.nextStrafeDist) {
+    spawnStrafer();
+    state.nextStrafeDist = state.dist + 1100 + Math.random() * 900;
+  }
+
+  // rim turbolasers lining the trench top, firing into space
+  if (state.dist >= state.nextSurfaceDist) {
+    spawnSurfaceTurret(-300, Math.random() < 0.5 ? -1 : 1);
+    state.nextSurfaceDist = state.dist + 110 + Math.random() * 90;
+  }
+
   // streaks
   for (let i = streaks.length - 1; i >= 0; i--) {
     const s = streaks[i];
@@ -1239,13 +1304,28 @@ function update(dt) {
       if (state.shields <= 0) gameOver();
       continue;
     }
-    if (tie.position.z > 16 || Math.abs(tie.position.x) > 32 || Math.abs(tie.position.y) > 32) {
+    // wider bounds so sky strafers (which dive from high up) aren't culled mid-run
+    if (tie.position.z > 18 || tie.position.z < -260 ||
+        Math.abs(tie.position.x) > 70 || tie.position.y > 90 || tie.position.y < -28) {
       scene.remove(tie); trenchTies.splice(i, 1); continue;
     }
     if (tie.position.z < -6) {
       tie.userData.fireCool -= dt;
       if (tie.userData.fireCool <= 0) { fireFromTie(tie); tie.userData.fireCool = 0.8 + Math.random(); }
     }
+  }
+
+  // rim turbolasers - track the sky battle and fire bolts up into space
+  for (let i = surfaceTurrets.length - 1; i >= 0; i--) {
+    const t = surfaceTurrets[i];
+    t.position.z += scroll;
+    if (t.position.z > 22) { scene.remove(t); surfaceTurrets.splice(i, 1); continue; }
+    t.userData.wander += dt * 0.7;
+    const aim = t.position.clone().add(new THREE.Vector3(
+      t.userData.side * 6 + Math.sin(t.userData.wander) * 10, 34, -18 + Math.cos(t.userData.wander) * 12));
+    t.userData.head.lookAt(aim);
+    t.userData.fireCool -= dt;
+    if (t.userData.fireCool <= 0) { fireSurfaceTurret(t, aim); t.userData.fireCool = 1.0 + Math.random() * 2.2; }
   }
 
   // projectiles
