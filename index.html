@@ -461,22 +461,6 @@ function makeTrenchSegment() {
     g.add(hatch);
   }
 
-  // sparse gantry bridge spanning the OPEN top of the trench
-  if (Math.random() < 0.4) {
-    const gantry = new THREE.Group();
-    const beam = edges(new THREE.BoxGeometry(TRENCH_W + 1, 0.7, 1.3), wireMat);
-    beam.position.y = TRENCH_H / 2 + 0.1;
-    gantry.add(beam);
-    // truss uprights
-    for (const bx of [-TRENCH_W / 3, 0, TRENCH_W / 3]) {
-      const up = edges(new THREE.BoxGeometry(0.3, 1.0, 1.3), dimMat);
-      up.position.set(bx, TRENCH_H / 2 + 0.55, 0);
-      gantry.add(up);
-    }
-    gantry.position.z = (Math.random() - 0.5) * (SEG_LEN - 4);
-    g.add(gantry);
-  }
-
   return g;
 }
 
