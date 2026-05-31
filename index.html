@@ -15,9 +15,20 @@
     position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
     text-align: center; pointer-events: none; z-index: 10;
     text-shadow: 0 0 8px #bfe0ff;
+    background: rgba(0, 0, 0, 0.8);
+    padding: 30px 56px 22px;
+    border-radius: 12px;
+    border: 1px solid rgba(150, 200, 255, 0.25);
+    box-shadow: 0 0 32px rgba(0, 0, 0, 0.55);
   }
   #center h1 { font-size: 42px; margin: 0 0 12px; letter-spacing: 8px; }
   #center p { margin: 4px 0; font-size: 14px; letter-spacing: 2px; }
+  #center .credit {
+    margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(150,200,255,0.18);
+    display: flex; align-items: center; justify-content: center; gap: 11px;
+  }
+  #center .credit img { width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(150,200,255,0.5); }
+  #center .credit span { font-size: 13px; letter-spacing: 3px; opacity: 0.9; }
   #center .blink { animation: blink 1s infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   .hidden { display: none !important; }
@@ -279,6 +290,56 @@ function setEngineBoost(boost) {
   const t = actx.currentTime;
   engine.flt.frequency.linearRampToValueAtTime(boost ? 560 : 300, t + 0.15);
   engine.g.gain.linearRampToValueAtTime(boost ? 0.085 : 0.05, t + 0.15);
+}
+// short harsh grind for scraping the trench wall
+function sfxScrape() {
+  if (!actx || !audioOn) return;
+  const t = actx.currentTime, dur = 0.14;
+  const src = actx.createBufferSource(); src.buffer = noiseBuffer(dur);
+  const flt = actx.createBiquadFilter(); flt.type = "bandpass";
+  flt.frequency.value = 2200 + Math.random() * 1400; flt.Q.value = 2;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.07, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(flt); flt.connect(g); g.connect(masterGain);
+  src.start(t); src.stop(t + dur);
+}
+// R2-D2 astromech chirps - a quick run of sliding beeps
+function sfxR2Bleep() {
+  if (!actx || !audioOn) return;
+  let t = actx.currentTime;
+  const n = 3 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < n; i++) {
+    const o = actx.createOscillator(); o.type = Math.random() < 0.5 ? "square" : "sine";
+    const f = 700 + Math.random() * 1500;
+    o.frequency.setValueAtTime(f, t);
+    o.frequency.exponentialRampToValueAtTime(f * (0.55 + Math.random() * 1.3), t + 0.08);  // quick slide
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.08, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    o.connect(g); g.connect(masterGain);
+    o.start(t); o.stop(t + 0.1);
+    t += 0.07 + Math.random() * 0.06;
+  }
+}
+// sad descending warble (R2 when you're destroyed)
+function sfxR2Sad() {
+  if (!actx || !audioOn) return;
+  const t = actx.currentTime, dur = 1.4;
+  const o = actx.createOscillator(); o.type = "sine";
+  o.frequency.setValueAtTime(900, t);
+  o.frequency.exponentialRampToValueAtTime(170, t + dur);    // forlorn descent
+  const lfo = actx.createOscillator(); lfo.frequency.value = 7;
+  const lfoG = actx.createGain(); lfoG.gain.value = 45;
+  lfo.connect(lfoG); lfoG.connect(o.frequency);              // wavering
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.12, t + 0.08);
+  g.gain.linearRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(masterGain);
+  o.start(t); lfo.start(t); o.stop(t + dur); lfo.stop(t + dur);
 }
 
 // a "part" = shaded solid fill + bright wireframe edges on top
@@ -880,8 +941,8 @@ function makeTurret(kind = 0, isSurface = false) {
   // glowing red targeting eye - only on the wall threats (rim turrets fire into space,
   // so an eye there just reads as a stuck red bolt). Added after merge to keep its material.
   if (!isSurface) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 10), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
-    eye.position.set(0, 0.45, -1.35);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
+    eye.position.set(0, 0.42, -1.4);
     head.add(eye);
   }
 
@@ -929,12 +990,19 @@ function seedTurrets() {
 // ---------- surface turbolasers on the trench rim, firing off into space ----------
 const surfaceTurrets = [];
 function spawnSurfaceTurret(zPos, side) {
-  const t = makeTurret(Math.random() < 0.4 ? 1 : 0, true);   // no red eye on rim turrets
+  const hostile = Math.random() < 0.25;                      // 1 in 4 shoots at the player; rest fire into space
+  const t = makeTurret(Math.random() < 0.4 ? 1 : 0, true);   // no default eye on rim turrets
   t.scale.setScalar(1.8);                                   // a touch smaller than the wall threats
   t.position.set(side * (TRENCH_W / 2 - 0.3), TRENCH_H / 2, zPos);   // stand upright on the rim
   t.userData.side = side;
   t.userData.fireCool = Math.random() * 2;
   t.userData.wander = Math.random() * Math.PI * 2;
+  t.userData.hostile = hostile;
+  if (hostile) {                                             // small red eye marks the ones tracking you
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
+    eye.position.set(0, 0.42, -1.4);
+    t.userData.head.add(eye);
+  }
   scene.add(t);
   surfaceTurrets.push(t);
 }
@@ -1067,6 +1135,22 @@ function explode(pos, color = 0xff7733, count = 14, scale = 1) {
   scene.add(flash);
   flashes.push(flash);
 }
+// small bright sparks streaming back - for the X-wing scraping the trench wall
+function spawnSparks(pos, n) {
+  for (let i = 0; i < n; i++) {
+    const sz = 0.07 + Math.random() * 0.13;
+    const m = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(sz, sz, sz)),
+      new THREE.LineBasicMaterial({ color: Math.random() < 0.5 ? 0xffaa33 : 0xffffff })
+    );
+    m.position.copy(pos);
+    m.userData.vel = new THREE.Vector3((Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.5, 0.9 + Math.random() * 1.4);
+    m.userData.life = 0.18 + Math.random() * 0.25;
+    m.userData.spin = new THREE.Vector3(Math.random(), Math.random(), Math.random()).multiplyScalar(0.5);
+    scene.add(m);
+    debris.push(m);
+  }
+}
 
 // ---------- in-trench attacking TIE fighters ----------
 const trenchTies = [];
@@ -1084,8 +1168,8 @@ function makeTrenchTie() {
   }
   optimizeStatic(g);
   // red cockpit eye (threat marker, kept after merge so it stays red)
-  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.36, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
-  eye.position.set(0, 0, -0.9);
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
+  eye.position.set(0, 0, -0.95);
   g.add(eye);
   return g;
 }
@@ -1155,6 +1239,7 @@ function fireEMP() {
   if (!state.started || !state.alive || state.emps <= 0) return;
   state.emps -= 1;
   sfxExplosion(true);
+  sfxR2Bleep();               // R2 fires the EMP
   empWave(xwing.position.clone());
   for (let j = turrets.length - 1; j >= 0; j--) {
     const t = turrets[j];
@@ -1220,6 +1305,8 @@ const state = {
   nextTieDist: 700,         // first head-on trench TIE
   nextStrafeDist: 1100,     // first sky strafing run
   nextSurfaceDist: 130,     // rim turrets firing into space
+  scrapeSnd: 0,             // throttle for the wall-scrape grind
+  bleepTimer: 8,            // countdown to the next ambient R2 chirp
 };
 
 const keys = {};
@@ -1231,6 +1318,7 @@ window.addEventListener("keydown", (e) => {
     document.getElementById("center").classList.add("hidden");
     seedTurrets();
     startEngine();
+    sfxR2Bleep();              // R2 chirps as you launch
   }
   if (e.code === "KeyM" && !e.repeat) { audioOn = !audioOn; if (masterGain) masterGain.gain.value = audioOn ? 0.45 : 0; }
   if (e.code === "KeyE" && !e.repeat) fireEMP();          // R2 EMP burst
@@ -1297,12 +1385,35 @@ function update(dt) {
   if (keys["ArrowDown"] || keys["KeyS"]) mv.y -= 1;
   if (mv.lengthSq() > 0) mv.normalize().multiplyScalar(10 * dt);
 
-  xwing.position.x = THREE.MathUtils.clamp(xwing.position.x + mv.x, -TRENCH_W / 2 + 2.5, TRENCH_W / 2 - 2.5);
-  xwing.position.y = THREE.MathUtils.clamp(xwing.position.y + mv.y, -TRENCH_H / 2 + 2, TRENCH_H / 2 - 2);
+  const xEdge = TRENCH_W / 2 - 2.5, yEdge = TRENCH_H / 2 - 2;
+  xwing.position.x = THREE.MathUtils.clamp(xwing.position.x + mv.x, -xEdge, xEdge);
+  xwing.position.y = THREE.MathUtils.clamp(xwing.position.y + mv.y, -yEdge, yEdge);
+
+  // wall scrape: riding the trench edge throws sparks and bleeds shields
+  let scrapeSign = 0, scrapeY = 0;
+  if (xwing.position.x >= xEdge - 0.02) scrapeSign = 1;
+  else if (xwing.position.x <= -xEdge + 0.02) scrapeSign = -1;
+  if (xwing.position.y >= yEdge - 0.02) scrapeY = 1;
+  else if (xwing.position.y <= -yEdge + 0.02) scrapeY = -1;
+  if (scrapeSign || scrapeY) {
+    const cp = new THREE.Vector3(
+      scrapeSign ? scrapeSign * (TRENCH_W / 2 - 0.6) : xwing.position.x + (Math.random() - 0.5) * 4,
+      scrapeY ? scrapeY * (TRENCH_H / 2 - 0.6) : xwing.position.y + (Math.random() - 0.5) * 2,
+      xwing.position.z + (Math.random() - 0.5) * 2);
+    spawnSparks(cp, 3);
+    state.shields -= 16 * dt;
+    state.scrapeSnd -= dt;
+    if (state.scrapeSnd <= 0) { sfxScrape(); state.scrapeSnd = 0.1; }
+    if (state.shields <= 0) { gameOver(); return; }
+  }
 
   // bank + pitch
   xwing.rotation.z = THREE.MathUtils.lerp(xwing.rotation.z, -mv.x * 2.0, 0.18);
   xwing.rotation.x = THREE.MathUtils.lerp(xwing.rotation.x,  mv.y * 0.9, 0.18);
+
+  // ambient R2 chirps now and then
+  state.bleepTimer -= dt;
+  if (state.bleepTimer <= 0) { sfxR2Bleep(); state.bleepTimer = 12 + Math.random() * 16; }
 
   // boost
   const boosting = keys["ShiftLeft"] || keys["ShiftRight"];
@@ -1425,23 +1536,31 @@ function update(dt) {
     }
   }
 
-  // rim turbolasers - track the sky battle and fire bolts up into space
+  // rim turbolasers - 1 in 4 track and shoot at the player, the rest fire up into space
   for (let i = surfaceTurrets.length - 1; i >= 0; i--) {
     const t = surfaceTurrets[i];
     t.position.z += scroll;
     if (t.position.z > 22) { scene.remove(t); surfaceTurrets.splice(i, 1); continue; }
-    t.userData.wander += dt * 0.6;
-    const hp = new THREE.Vector3();
-    t.userData.head.getWorldPosition(hp);
-    // fire OUTWARD over the wall at a natural ~30 deg elevation (not near-vertical),
-    // so the gun sits right on its mount and the bolt visibly arcs into space
-    const aim = hp.add(new THREE.Vector3(
-      t.userData.side * 28 + Math.sin(t.userData.wander) * 7,    // mostly outward + gentle sweep
-      15 + Math.sin(t.userData.wander * 0.7) * 4,                 // moderate elevation
-      -6 + Math.cos(t.userData.wander) * 10));                    // sweep along the trench
-    t.userData.head.lookAt(aim);
-    t.userData.fireCool -= dt;
-    if (t.userData.fireCool <= 0) { fireSurfaceTurret(t, aim); t.userData.fireCool = 0.6 + Math.random() * 1.4; }
+    if (t.userData.hostile && state.alive) {
+      // depress the gun down into the trench and fire AT the player
+      t.userData.head.lookAt(xwing.position);
+      if (t.position.z < -4 && t.position.z > -210) {
+        t.userData.fireCool -= dt;
+        if (t.userData.fireCool <= 0) { fireFromTurret(t); t.userData.fireCool = 1.1 + Math.random() * 1.6; }
+      }
+    } else {
+      // fire outward over the wall at a natural ~30 deg elevation into space
+      t.userData.wander += dt * 0.6;
+      const hp = new THREE.Vector3();
+      t.userData.head.getWorldPosition(hp);
+      const aim = hp.add(new THREE.Vector3(
+        t.userData.side * 28 + Math.sin(t.userData.wander) * 7,
+        15 + Math.sin(t.userData.wander * 0.7) * 4,
+        -6 + Math.cos(t.userData.wander) * 10));
+      t.userData.head.lookAt(aim);
+      t.userData.fireCool -= dt;
+      if (t.userData.fireCool <= 0) { fireSurfaceTurret(t, aim); t.userData.fireCool = 0.6 + Math.random() * 1.4; }
+    }
   }
 
   // projectiles
@@ -1557,6 +1676,7 @@ function gameOver() {
   state.alive = false;
   explode(xwing.position, 0xff3344, 48);
   sfxExplosion(true);
+  setTimeout(sfxR2Sad, 350);   // R2's mournful warble after the boom
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.4);  // engine dies
   xwing.visible = false;
   const c = document.getElementById("center");
