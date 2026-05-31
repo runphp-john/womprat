@@ -15,7 +15,12 @@
     display: inline-block; width: 110px; height: 12px; margin-left: 6px;
     border: 1px solid #bfe0ff; vertical-align: middle; box-shadow: 0 0 6px rgba(143,182,230,0.4);
   }
-  #hud .bar > i { display: block; height: 100%; width: 100%; background: #7fffb0; transition: width .12s linear; }
+  #hud .bar > i { display: block; height: 100%; width: 100%; background: #bfe0ff; transition: width .12s linear; }
+  #dmgflash {
+    position: fixed; inset: 0; pointer-events: none; z-index: 8; opacity: 0;
+    box-shadow: inset 0 0 140px 50px rgba(255, 45, 45, 0.75);
+    transition: opacity .1s linear;
+  }
   #center {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
     text-align: center; pointer-events: none; z-index: 10;
@@ -73,6 +78,7 @@
   <div>DIST <span id="dist">0</span> M</div>
 </div>
 <div class="crosshair"></div>
+<div id="dmgflash"></div>
 <div id="center">
   <h1>WOMPRAT</h1>
   <p>ARROWS / WASD &nbsp; MOVE</p>
@@ -332,11 +338,11 @@ function sfxR2Bleep() {
     o.frequency.exponentialRampToValueAtTime(f * (0.55 + Math.random() * 1.3), t + 0.08);  // quick slide
     const g = actx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.08, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
+    g.gain.linearRampToValueAtTime(0.22, t + 0.012);     // louder so R2 cuts through
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
     o.connect(g); g.connect(masterGain);
-    o.start(t); o.stop(t + 0.1);
-    t += 0.07 + Math.random() * 0.06;
+    o.start(t); o.stop(t + 0.12);
+    t += 0.08 + Math.random() * 0.06;
   }
 }
 // sad descending warble (R2 when you're destroyed)
@@ -351,7 +357,7 @@ function sfxR2Sad() {
   lfo.connect(lfoG); lfoG.connect(o.frequency);              // wavering
   const g = actx.createGain();
   g.gain.setValueAtTime(0.0001, t);
-  g.gain.linearRampToValueAtTime(0.12, t + 0.08);
+  g.gain.linearRampToValueAtTime(0.22, t + 0.08);            // louder mournful warble
   g.gain.linearRampToValueAtTime(0.0001, t + dur);
   o.connect(g); g.connect(masterGain);
   o.start(t); lfo.start(t); o.stop(t + dur); lfo.stop(t + dur);
@@ -692,12 +698,13 @@ function makeTIE() {
 }
 function makeSkyXWing() {
   const g = new THREE.Group();
-  const body = wire(new THREE.CylinderGeometry(0.4, 0.18, 4.5, 6), sdMat);
-  body.rotation.x = Math.PI / 2;
+  // sharp pointed nose at -Z (the direction lookAt faces), wide tail + wings at +Z
+  const body = wire(new THREE.CylinderGeometry(0.04, 0.42, 5.0, 6), sdMat);
+  body.rotation.x = -Math.PI / 2;   // sharp tip -> -Z (front)
   g.add(body);
   for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     const wing = wire(new THREE.BoxGeometry(4.2, 0.1, 1.2), sdMat);
-    wing.position.set(sx * 2.3, sy * 0.45, 1.3);
+    wing.position.set(sx * 2.3, sy * 0.45, 1.7);                                  // wings at the rear
     wing.rotation.z = sx * sy * 0.5;                                              // X-foil spread
     g.add(wing);
   }
@@ -1019,10 +1026,12 @@ function seedTurrets() {
 // ---------- surface turbolasers on the trench rim, firing off into space ----------
 const surfaceTurrets = [];
 function spawnSurfaceTurret(zPos, side) {
-  const hostile = Math.random() < 0.25;                      // 1 in 4 shoots at the player; rest fire into space
+  spawnSurfaceTurret.n = (spawnSurfaceTurret.n || 0) + 1;
+  const hostile = spawnSurfaceTurret.n % 4 === 1;            // guaranteed 1 in 4 shoots at the player
   const t = makeTurret(Math.random() < 0.4 ? 1 : 0, true);   // no default eye on rim turrets
-  t.scale.setScalar(1.8);                                   // a touch smaller than the wall threats
-  t.position.set(side * (TRENCH_W / 2 - 0.3), TRENCH_H / 2, zPos);   // stand upright on the rim
+  t.scale.setScalar(1.6);                                   // a touch smaller than the wall threats
+  // seat the base just inside the lip and sunk slightly in, so it reads as bolted to the rim
+  t.position.set(side * (TRENCH_W / 2 - 1.1), TRENCH_H / 2 - 0.6, zPos);
   t.userData.side = side;
   t.userData.fireCool = Math.random() * 2;
   t.userData.wander = Math.random() * Math.PI * 2;
@@ -1042,7 +1051,7 @@ function fireSurfaceTurret(t, aimWorld) {
   const dir = new THREE.Vector3().subVectors(aimWorld, muzzle).normalize();
   // fat bright green bolt so it clearly reads as turbolaser fire into space
   const bolt = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.28, 0.28, 3.2, 6),
+    new THREE.CylinderGeometry(0.28, 0.28, 6.0, 6),
     new THREE.MeshBasicMaterial({ color: 0x33ff66, fog: false })
   );
   bolt.position.copy(muzzle);
@@ -1058,16 +1067,16 @@ function fireSurfaceTurret(t, aimWorld) {
 const playerShots = [];
 const enemyShots = [];
 
-function makeLaser(color, haloColor) {
+function makeLaser(color, haloColor, len = 4.2) {
   // group with core + halo, both cylinders default along Y so lookAt+rotateX(PI/2) at fire time orients the GROUP correctly
   const grp = new THREE.Group();
   const core = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.28, 0.28, 4.2, 8),
+    new THREE.CylinderGeometry(0.28, 0.28, len, 8),
     new THREE.MeshBasicMaterial({ color })
   );
   grp.add(core);
   const halo = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.55, 0.55, 4.2, 8),
+    new THREE.CylinderGeometry(0.55, 0.55, len, 8),
     new THREE.MeshBasicMaterial({ color: haloColor ?? color, transparent: true, opacity: 0.35 })
   );
   grp.add(halo);
@@ -1089,6 +1098,7 @@ function findTarget(origin) {
     if (score < bestScore) { bestScore = score; best = t; }
   };
   for (const t of turrets) consider(t, 0);
+  for (const t of surfaceTurrets) consider(t, t.userData.hostile ? 60 : 0);  // rim cannons targetable too
   for (const t of trenchTies) consider(t, 120);       // prefer the incoming TIE
   return best;
 }
@@ -1124,7 +1134,7 @@ function fireFromTurret(t) {
   const muzzle = new THREE.Vector3(0, 0, -3.3);   // barrel tip in head-local space
   t.userData.head.localToWorld(muzzle);
   const dir = new THREE.Vector3().subVectors(xwing.position, muzzle).normalize();
-  const shot = makeLaser(0x33ff66, 0xaaffcc);
+  const shot = makeLaser(0x33ff66, 0xaaffcc, 8);
   shot.position.copy(muzzle);
   shot.lookAt(muzzle.clone().add(dir));
   shot.rotateX(Math.PI / 2);
@@ -1232,7 +1242,7 @@ function fireFromTie(t) {
   sfxTieLaser();
   const muzzle = t.position.clone();
   const dir = new THREE.Vector3().subVectors(xwing.position, muzzle).normalize();
-  const shot = makeLaser(0x33ff66, 0xaaffcc);   // TIE green
+  const shot = makeLaser(0x33ff66, 0xaaffcc, 8);   // TIE green
   shot.position.copy(muzzle);
   shot.lookAt(muzzle.clone().add(dir));
   shot.rotateX(Math.PI / 2);
@@ -1349,6 +1359,7 @@ window.addEventListener("keyup", (e) => { keys[e.code] = false; });
 
 const hudScore = document.getElementById("score");
 const shieldFill = document.getElementById("shieldfill");
+const dmgFlash = document.getElementById("dmgflash");
 const hudDist = document.getElementById("dist");
 const hudEmp = document.getElementById("emp");
 const reticle = document.querySelector(".crosshair");
@@ -1375,7 +1386,6 @@ function setHUD() {
   hudScore.textContent = state.score;
   const pct = Math.max(0, Math.min(100, state.shields));
   shieldFill.style.width = pct + "%";
-  shieldFill.style.background = pct > 50 ? "#7fffb0" : pct > 25 ? "#ffd166" : "#ff5555";
   hudDist.textContent = (state.dist | 0);
   hudEmp.textContent = state.emps;
 }
@@ -1420,15 +1430,21 @@ function update(dt) {
   if (xwing.position.y >= yEdge - 0.02) scrapeY = 1;
   else if (xwing.position.y <= -yEdge + 0.02) scrapeY = -1;
   if (scrapeSign || scrapeY) {
-    const cp = new THREE.Vector3(
-      scrapeSign ? scrapeSign * (TRENCH_W / 2 - 0.6) : xwing.position.x + (Math.random() - 0.5) * 4,
-      scrapeY ? scrapeY * (TRENCH_H / 2 - 0.6) : xwing.position.y + (Math.random() - 0.5) * 2,
-      xwing.position.z + (Math.random() - 0.5) * 2);
-    spawnSparks(cp, 3);
+    // throw a big shower of sparks from the contact edge, near the wingtip
+    for (let s = 0; s < 9; s++) {
+      const cp = new THREE.Vector3(
+        scrapeSign ? scrapeSign * (TRENCH_W / 2 - 0.5) : xwing.position.x + (Math.random() - 0.5) * 5,
+        scrapeY ? scrapeY * (TRENCH_H / 2 - 0.5) : xwing.position.y + (Math.random() - 0.5) * 2,
+        xwing.position.z + (Math.random() - 0.5) * 3);
+      spawnSparks(cp, 1);
+    }
+    dmgFlash.style.opacity = "0.85";          // red edge flash while scraping
     state.shields -= 16 * dt;
     state.scrapeSnd -= dt;
-    if (state.scrapeSnd <= 0) { sfxScrape(); state.scrapeSnd = 0.1; }
+    if (state.scrapeSnd <= 0) { sfxScrape(); state.scrapeSnd = 0.09; }
     if (state.shields <= 0) { gameOver(); return; }
+  } else {
+    dmgFlash.style.opacity = "0";
   }
 
   // bank + pitch
@@ -1437,7 +1453,7 @@ function update(dt) {
 
   // ambient R2 chirps now and then
   state.bleepTimer -= dt;
-  if (state.bleepTimer <= 0) { sfxR2Bleep(); state.bleepTimer = 12 + Math.random() * 16; }
+  if (state.bleepTimer <= 0) { sfxR2Bleep(); state.bleepTimer = 7 + Math.random() * 9; }
 
   // boost
   const boosting = keys["ShiftLeft"] || keys["ShiftRight"];
@@ -1568,19 +1584,19 @@ function update(dt) {
     const t = surfaceTurrets[i];
     t.position.z += scroll;
     if (t.position.z > 22) { scene.remove(t); surfaceTurrets.splice(i, 1); continue; }
+    t.userData.head.getWorldPosition(t.userData.aimWorld);    // gun position, for player targeting/hits
     if (t.userData.hostile && state.alive) {
       // depress the gun down into the trench and fire AT the player
       t.userData.head.lookAt(xwing.position);
-      if (t.position.z < -4 && t.position.z > -210) {
+      t.userData.head.getWorldPosition(t.userData.aimWorld);
+      if (t.position.z < -3 && t.position.z > -250) {
         t.userData.fireCool -= dt;
-        if (t.userData.fireCool <= 0) { fireFromTurret(t); t.userData.fireCool = 1.1 + Math.random() * 1.6; }
+        if (t.userData.fireCool <= 0) { fireFromTurret(t); t.userData.fireCool = 0.8 + Math.random() * 1.2; }
       }
     } else {
       // fire outward over the wall at a natural ~30 deg elevation into space
       t.userData.wander += dt * 0.6;
-      const hp = new THREE.Vector3();
-      t.userData.head.getWorldPosition(hp);
-      const aim = hp.add(new THREE.Vector3(
+      const aim = t.userData.aimWorld.clone().add(new THREE.Vector3(
         t.userData.side * 28 + Math.sin(t.userData.wander) * 7,
         15 + Math.sin(t.userData.wander * 0.7) * 4,
         -6 + Math.cos(t.userData.wander) * 10));
@@ -1639,6 +1655,24 @@ function update(dt) {
         break;
       }
     }
+    if (consumed) continue;
+    for (let j = surfaceTurrets.length - 1; j >= 0; j--) {
+      const rt = surfaceTurrets[j];
+      if (s.position.distanceTo(rt.userData.aimWorld) < 2.4) {
+        rt.userData.health -= 1;
+        scene.remove(s); playerShots.splice(i, 1);
+        if (rt.userData.health <= 0) {
+          explode(rt.userData.aimWorld, 0xffaa33, 50, 2.0);
+          explode(rt.userData.aimWorld, 0x88d8ff, 16, 1.2);
+          sfxExplosion(true);
+          scene.remove(rt); surfaceTurrets.splice(j, 1);
+          state.score += rt.userData.hostile ? 100 : 25;
+        } else {
+          explode(rt.userData.aimWorld, 0xffee66, 6, 0.9);
+        }
+        break;
+      }
+    }
   }
 
   for (let i = enemyShots.length - 1; i >= 0; i--) {
@@ -1653,6 +1687,7 @@ function update(dt) {
       state.shields -= 12;
       explode(xwing.position, 0xff3344, 6);
       sfxExplosion(false);
+      dmgFlash.style.opacity = "0.9";       // red flash on taking a hit
       if (state.shields <= 0) gameOver();
     }
   }
