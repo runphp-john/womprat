@@ -869,11 +869,11 @@ function fireSurfaceTurret(t, aimWorld) {
   t.userData.head.localToWorld(muzzle);
   const dir = new THREE.Vector3().subVectors(aimWorld, muzzle).normalize();
   const color = 0x33ff66;                                   // green turbolaser bolts into space
-  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(9)]);
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(11)]);
   const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, fog: false }));
   line.position.copy(muzzle);
-  line.userData.vel = dir.multiplyScalar(5);
-  line.userData.life = 1.6;
+  line.userData.vel = dir.multiplyScalar(3.4);   // slower so the bolt is visibly seen arcing into space
+  line.userData.life = 2.2;
   scene.add(line);
   skyLasers.push(line);
 }
@@ -1339,14 +1339,15 @@ function update(dt) {
     const t = surfaceTurrets[i];
     t.position.z += scroll;
     if (t.position.z > 22) { scene.remove(t); surfaceTurrets.splice(i, 1); continue; }
-    t.userData.wander += dt * 0.5;
+    t.userData.wander += dt * 0.6;
     const hp = new THREE.Vector3();
     t.userData.head.getWorldPosition(hp);
-    // aim firmly UP into space, leaning outward over the wall, with a gentle sweep
+    // fire OUTWARD over the wall at a natural ~30 deg elevation (not near-vertical),
+    // so the gun sits right on its mount and the bolt visibly arcs into space
     const aim = hp.add(new THREE.Vector3(
-      t.userData.side * 9 + Math.sin(t.userData.wander) * 6,
-      40,
-      -8 + Math.cos(t.userData.wander) * 7));
+      t.userData.side * 28 + Math.sin(t.userData.wander) * 7,    // mostly outward + gentle sweep
+      15 + Math.sin(t.userData.wander * 0.7) * 4,                 // moderate elevation
+      -6 + Math.cos(t.userData.wander) * 10));                    // sweep along the trench
     t.userData.head.lookAt(aim);
     t.userData.fireCool -= dt;
     if (t.userData.fireCool <= 0) { fireSurfaceTurret(t, aim); t.userData.fireCool = 0.6 + Math.random() * 1.4; }
