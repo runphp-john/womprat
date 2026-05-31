@@ -116,9 +116,12 @@ const PALETTE = [
   new THREE.Vector3(130/255, 192/255, 234/255),
   new THREE.Vector3(172/255, 216/255, 246/255),
   new THREE.Vector3(220/255, 240/255, 253/255),
-  // reds / oranges (lasers + explosions stay warm for gameplay contrast)
+  // reds / oranges (player lasers + explosions)
   new THREE.Vector3(255/255,  70/255,  60/255),
   new THREE.Vector3(255/255, 140/255,  70/255),
+  // greens (Imperial turbolaser + TIE bolts)
+  new THREE.Vector3( 50/255, 235/255, 110/255),
+  new THREE.Vector3(150/255, 250/255, 185/255),
   // whites (kept near-pure so the ink reads white, not blue)
   new THREE.Vector3(255/255, 255/255, 255/255),
   new THREE.Vector3(238/255, 245/255, 252/255),
@@ -138,13 +141,13 @@ const palettePass = new ShaderPass({
   `,
   fragmentShader: `
     uniform sampler2D tDiffuse;
-    uniform vec3 uPalette[16];
+    uniform vec3 uPalette[18];
     varying vec2 vUv;
     void main() {
       vec3 c = texture2D(tDiffuse, vUv).rgb;
       vec3 best = uPalette[0];
       float bestD = distance(c, uPalette[0]);
-      for (int i = 1; i < 16; i++) {
+      for (int i = 1; i < 18; i++) {
         float d = distance(c, uPalette[i]);
         if (d < bestD) { bestD = d; best = uPalette[i]; }
       }
@@ -161,7 +164,7 @@ composer.addPass(palettePass);          // last pass -> straight to screen, no e
 const wireMat = new THREE.LineBasicMaterial({ color: 0xffffff });  // pure white blueprint ink
 const dimMat  = new THREE.LineBasicMaterial({ color: 0x86b6e2 });  // secondary structural lines (lighter)
 const hotMat  = new THREE.LineBasicMaterial({ color: 0xff7755 });
-const turretMat = new THREE.LineBasicMaterial({ color: 0xff4433 }); // red - marks turrets as threats
+const turretMat = new THREE.LineBasicMaterial({ color: 0xffffff }); // same white as the trench (red eye marks the threat)
 
 // solid fill behind the wireframe: occludes background (stars) but stays DARK and close to
 // the bg so bright edge lines pop (crisp blueprint, not a washed-out mid-blue)
@@ -539,7 +542,7 @@ for (let i = 0; i < 5; i++) { const s = makeTIE();      s.userData.type = "tie";
 for (let i = 0; i < 3; i++) { const s = makeSkyXWing(); s.userData.type = "xw";  placeSkyShip(s); skyShips.push(s); scene.add(s); }
 
 function spawnSkyLaser(s) {
-  const color = s.userData.type === "tie" ? 0xeef4ff : 0xff2222;   // white vs red bolts (palette has no green)
+  const color = s.userData.type === "tie" ? 0x33ff66 : 0xff2222;   // TIE green vs X-wing red
   const dir = s.userData.vel.clone().normalize();
   const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(7)]);
   const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, fog: false }));
@@ -808,7 +811,7 @@ function makeTurret(kind = 0) {
   g.userData.head = head;
   // progressive difficulty: +1 HP per 2500m travelled
   g.userData.health = (heavy ? 4 : 3) + Math.floor(state.dist / 2500);
-  g.userData.cooldown = 1 + Math.random() * 2;
+  g.userData.cooldown = 0.3 + Math.random() * 1.0;       // shorter delay before first shot
   g.userData.aimWorld = new THREE.Vector3();
   g.userData.hitR = 1.7 * scale;        // collision radius scales with the model
   return g;
@@ -858,7 +861,7 @@ function fireSurfaceTurret(t, aimWorld) {
   const muzzle = new THREE.Vector3(0, 0, -3.3);
   t.userData.head.localToWorld(muzzle);
   const dir = new THREE.Vector3().subVectors(aimWorld, muzzle).normalize();
-  const color = Math.random() < 0.5 ? 0xff4433 : 0xeef4ff;  // turbolaser bolts up into space
+  const color = 0x33ff66;                                   // green turbolaser bolts into space
   const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), dir.clone().multiplyScalar(9)]);
   const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, fog: false }));
   line.position.copy(muzzle);
@@ -1278,12 +1281,12 @@ function update(dt) {
     if (t.position.z > 16) { scene.remove(t); turrets.splice(i, 1); continue; }
     t.userData.head.lookAt(xwing.position);
     t.userData.head.getWorldPosition(t.userData.aimWorld);   // gun position for aim/hit
-    if (t.position.z < -5 && t.position.z > -150) {
+    if (t.position.z < -3 && t.position.z > -240) {            // fire while still approaching
       t.userData.cooldown -= dt;
       if (t.userData.cooldown <= 0) {
         fireFromTurret(t);
         const dmul = Math.max(0.45, 1 - state.dist / 18000);   // fire faster the deeper you get
-        t.userData.cooldown = (0.9 + Math.random() * 1.6) * dmul;
+        t.userData.cooldown = (0.8 + Math.random() * 1.4) * dmul;
       }
     }
   }
@@ -1320,12 +1323,17 @@ function update(dt) {
     const t = surfaceTurrets[i];
     t.position.z += scroll;
     if (t.position.z > 22) { scene.remove(t); surfaceTurrets.splice(i, 1); continue; }
-    t.userData.wander += dt * 0.7;
-    const aim = t.position.clone().add(new THREE.Vector3(
-      t.userData.side * 6 + Math.sin(t.userData.wander) * 10, 34, -18 + Math.cos(t.userData.wander) * 12));
+    t.userData.wander += dt * 0.5;
+    const hp = new THREE.Vector3();
+    t.userData.head.getWorldPosition(hp);
+    // aim firmly UP into space, leaning outward over the wall, with a gentle sweep
+    const aim = hp.add(new THREE.Vector3(
+      t.userData.side * 9 + Math.sin(t.userData.wander) * 6,
+      40,
+      -8 + Math.cos(t.userData.wander) * 7));
     t.userData.head.lookAt(aim);
     t.userData.fireCool -= dt;
-    if (t.userData.fireCool <= 0) { fireSurfaceTurret(t, aim); t.userData.fireCool = 1.0 + Math.random() * 2.2; }
+    if (t.userData.fireCool <= 0) { fireSurfaceTurret(t, aim); t.userData.fireCool = 0.6 + Math.random() * 1.4; }
   }
 
   // projectiles
