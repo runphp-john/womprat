@@ -71,6 +71,10 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
+// stylised game: disable colour management so the palette renders EXACTLY as authored
+// (otherwise the final sRGB encode brightens the dark navy into a washed-out steel blue)
+THREE.ColorManagement.enabled = false;
+
 // ---------- core ----------
 const scene = new THREE.Scene();
 const BLUEPRINT_BG = 0x07182f;          // deep saturated blueprint navy
@@ -78,6 +82,7 @@ scene.background = new THREE.Color(BLUEPRINT_BG);
 scene.fog = new THREE.Fog(BLUEPRINT_BG, 100, 340);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;   // no extra gamma encode - palette is final
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
@@ -148,8 +153,7 @@ const palettePass = new ShaderPass({
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-composer.addPass(palettePass);
-composer.addPass(new OutputPass());
+composer.addPass(palettePass);          // last pass -> straight to screen, no extra encoding
 
 // materials - blueprint palette: bright white ink on deep blue
 const wireMat = new THREE.LineBasicMaterial({ color: 0xffffff });  // pure white blueprint ink
@@ -478,9 +482,9 @@ function makeStarDestroyer() {
 
 // a fleet of three Star Destroyers at varied ranges
 const sdFleet = [
-  { pos: [-60, 58, -300], rot: [0.06, 0.55, 0.03], s: 1.0 },
-  { pos: [125, 84, -440], rot: [0.04, -0.7, -0.05], s: 1.35 },
-  { pos: [25, 116, -580], rot: [0.02, 0.3, 0.02], s: 1.9 },
+  { pos: [-185, 64, -360], rot: [0.05, 0.6, 0.04], s: 1.1 },
+  { pos: [ 215, 98, -540], rot: [0.03, -0.85, -0.05], s: 1.5 },
+  { pos: [ -50, 150, -760], rot: [0.02, 0.25, 0.02], s: 2.3 },
 ];
 for (const f of sdFleet) {
   const sd = makeStarDestroyer();
@@ -822,6 +826,14 @@ function spawnTurret(zPos) {
   turrets.push(t);
 }
 
+// pre-seed a few turrets ahead so the first encounter comes quickly, then space the rest out
+function seedTurrets() {
+  for (const t of turrets) scene.remove(t);
+  turrets.length = 0;
+  for (const z of [-55, -125, -195, -265]) spawnTurret(z);
+  state.nextTurretDist = state.dist + 260;
+}
+
 // ---------- projectiles ----------
 const playerShots = [];
 const enemyShots = [];
@@ -968,6 +980,7 @@ const state = {
   alive: true,
   started: false,
   fireCool: 0,
+  nextTurretDist: 260,
 };
 
 const keys = {};
@@ -976,6 +989,7 @@ window.addEventListener("keydown", (e) => {
   if (!state.started) {
     state.started = true;
     document.getElementById("center").classList.add("hidden");
+    seedTurrets();
   }
   if (state.started && !state.alive && e.code === "Space") restart();
 });
@@ -1019,6 +1033,7 @@ function restart() {
   xwing.position.set(0, 0, 3);
   xwing.visible = true;
   document.getElementById("center").classList.add("hidden");
+  seedTurrets();
 }
 
 // ---------- loop ----------
@@ -1068,12 +1083,13 @@ function update(dt) {
     if (seg.position.z > SEG_LEN) {
       const minZ = Math.min(...trenchSegments.map(s => s.position.z));
       seg.position.z = minZ - SEG_LEN;
-      if (Math.random() < 0.9) {
-        const zSpawn = seg.position.z + (Math.random() - 0.5) * SEG_LEN;
-        spawnTurret(zSpawn);
-        if (Math.random() < 0.35) spawnTurret(zSpawn + 5);
-      }
     }
+  }
+
+  // distance-based turret spawner - evenly spaced, appears within view range
+  if (state.dist >= state.nextTurretDist) {
+    spawnTurret(-300 + (Math.random() - 0.5) * 50);
+    state.nextTurretDist = state.dist + 240 + Math.random() * 90;
   }
 
   // streaks
