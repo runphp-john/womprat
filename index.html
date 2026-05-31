@@ -1077,6 +1077,15 @@ function fireEMP() {
     scene.remove(t); trenchTies.splice(j, 1);
     state.score += 150;
   }
+  // also knock out the rim turbolasers (the most visible ones) for clear feedback
+  for (let j = surfaceTurrets.length - 1; j >= 0; j--) {
+    const t = surfaceTurrets[j];
+    const p = new THREE.Vector3(); t.getWorldPosition(p);
+    explode(p, 0xffaa33, 45, 2.0);
+    explode(p, 0x88d8ff, 16, 1.2);
+    scene.remove(t); surfaceTurrets.splice(j, 1);
+    state.score += 50;
+  }
   setHUD();
 }
 
