@@ -11,6 +11,11 @@
     text-shadow: 0 0 6px #bfe0ff; font-size: 16px; letter-spacing: 2px;
     z-index: 10;
   }
+  #hud .bar {
+    display: inline-block; width: 110px; height: 12px; margin-left: 6px;
+    border: 1px solid #bfe0ff; vertical-align: middle; box-shadow: 0 0 6px rgba(143,182,230,0.4);
+  }
+  #hud .bar > i { display: block; height: 100%; width: 100%; background: #7fffb0; transition: width .12s linear; }
   #center {
     position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
     text-align: center; pointer-events: none; z-index: 10;
@@ -23,6 +28,15 @@
   }
   #center h1 { font-size: 42px; margin: 0 0 12px; letter-spacing: 8px; }
   #center p { margin: 4px 0; font-size: 14px; letter-spacing: 2px; }
+  #center input {
+    pointer-events: auto; font-family: inherit; font-size: 18px; letter-spacing: 5px;
+    text-align: center; text-transform: uppercase; color: #bfe0ff; caret-color: #bfe0ff;
+    background: rgba(0, 24, 48, 0.85); border: 1px solid #bfe0ff; border-radius: 4px;
+    padding: 6px 8px; width: 170px; margin: 6px 0 4px; outline: none;
+  }
+  #center .lb { margin-top: 12px; display: inline-block; min-width: 220px; font-size: 13px; letter-spacing: 1px; }
+  #center .lb .row { display: flex; justify-content: space-between; gap: 26px; padding: 1px 0; opacity: 0.8; }
+  #center .lb .row.me { color: #ffd166; opacity: 1; text-shadow: 0 0 8px #ffd166; }
   #center .credit {
     margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(150,200,255,0.18);
     display: flex; align-items: center; justify-content: center; gap: 11px;
@@ -54,7 +68,7 @@
 <body>
 <div id="hud">
   <div>SCORE <span id="score">0</span></div>
-  <div>SHIELDS <span id="shields">100</span></div>
+  <div>SHIELDS <span class="bar"><i id="shieldfill"></i></span></div>
   <div>EMP <span id="emp">3</span></div>
   <div>DIST <span id="dist">0</span> M</div>
 </div>
@@ -634,8 +648,9 @@ function makeStarDestroyer() {
 // two Star Destroyers, bows pitched DOWN toward the Death Star surface (negative pitch),
 // at different yaws so one dives in and one runs alongside
 const sdFleet = [
-  { pos: [-270,  80, -470], rot: [-0.5,  0.45, 0.06], s: 1.6 },  // left, diving toward the surface
-  { pos: [ 330, 130, -600], rot: [-0.32, -0.8, -0.12], s: 2.2 }, // right, angling in alongside
+  // cruising near-level over the trench (no roll - the banked angles read as "falling")
+  { pos: [-270, 95, -480], rot: [0.04,  0.5, 0], s: 1.6 },   // left, gentle yaw
+  { pos: [ 340, 120, -640], rot: [0.06, -0.9, 0], s: 2.3 },  // right, yawed the other way
 ];
 for (const f of sdFleet) {
   const sd = makeStarDestroyer();
@@ -646,18 +661,31 @@ for (const f of sdFleet) {
 }
 
 // ---------- background dogfight: TIE fighters vs X-wings ----------
-function makeTIE() {
+// hexagonal solar panel with radial spokes + inner hex (matches the reference)
+function tiePanelLines(r, mat) {
+  const v = [];
+  for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2 + Math.PI / 6; v.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 0)); }
+  const pts = [];
+  for (let i = 0; i < 6; i++) { pts.push(v[i], v[(i + 1) % 6]); }                                   // outer hexagon
+  for (let i = 0; i < 6; i++) { pts.push(new THREE.Vector3(0, 0, 0), v[i]); }                        // radial spokes
+  for (let i = 0; i < 6; i++) { pts.push(v[i].clone().multiplyScalar(0.45), v[(i + 1) % 6].clone().multiplyScalar(0.45)); } // inner hex
+  return new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), mat);
+}
+function buildTIE(mat) {
   const g = new THREE.Group();
-  g.add(wire(new THREE.SphereGeometry(1.0, 6, 5), sdMat));                       // cockpit pod
+  g.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.0, 0)), mat));  // faceted cockpit ball
   for (const sx of [-1, 1]) {
-    const panel = wire(new THREE.CylinderGeometry(2.3, 2.3, 0.15, 6), sdMat);    // hex solar wing
-    panel.rotation.x = Math.PI / 2;
-    panel.position.x = sx * 2.7;
+    const panel = tiePanelLines(2.5, mat);          // big hex solar wing facing forward
+    panel.position.x = sx * 2.8;
     g.add(panel);
-    const strut = wire(new THREE.BoxGeometry(1.6, 0.25, 0.25), sdMat);
-    strut.position.x = sx * 1.4;
+    const strut = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.6, 0.18, 0.18)), mat);
+    strut.position.x = sx * 1.45;
     g.add(strut);
   }
+  return g;
+}
+function makeTIE() {
+  const g = buildTIE(sdMat);
   optimizeStatic(g);
   return g;
 }
@@ -1155,17 +1183,7 @@ function spawnSparks(pos, n) {
 // ---------- in-trench attacking TIE fighters ----------
 const trenchTies = [];
 function makeTrenchTie() {
-  const g = new THREE.Group();
-  g.add(wire(new THREE.SphereGeometry(1.0, 8, 6), wireMat));                  // cockpit pod
-  for (const sx of [-1, 1]) {
-    const panel = wire(new THREE.CylinderGeometry(2.1, 2.1, 0.15, 6), wireMat); // hex solar wing
-    panel.rotation.x = Math.PI / 2;
-    panel.position.x = sx * 2.5;
-    g.add(panel);
-    const strut = wire(new THREE.BoxGeometry(1.5, 0.22, 0.22), wireMat);
-    strut.position.x = sx * 1.35;
-    g.add(strut);
-  }
+  const g = buildTIE(wireMat);
   optimizeStatic(g);
   // red cockpit eye (threat marker, kept after merge so it stays red)
   const eye = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
@@ -1261,7 +1279,7 @@ function fireEMP() {
     explode(p, 0xffaa33, 45, 2.0);
     explode(p, 0x88d8ff, 16, 1.2);
     scene.remove(t); surfaceTurrets.splice(j, 1);
-    state.score += 50;
+    state.score += 25;
   }
   setHUD();
 }
@@ -1307,6 +1325,8 @@ const state = {
   nextSurfaceDist: 130,     // rim turrets firing into space
   scrapeSnd: 0,             // throttle for the wall-scrape grind
   bleepTimer: 8,            // countdown to the next ambient R2 chirp
+  distAcc: 0,               // distance-score accumulator (+1 per 10m)
+  entering: false,          // typing name into the leaderboard
 };
 
 const keys = {};
@@ -1322,12 +1342,12 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.code === "KeyM" && !e.repeat) { audioOn = !audioOn; if (masterGain) masterGain.gain.value = audioOn ? 0.45 : 0; }
   if (e.code === "KeyE" && !e.repeat) fireEMP();          // R2 EMP burst
-  if (state.started && !state.alive && e.code === "Space") restart();
+  if (state.started && !state.alive && !state.entering && e.code === "Space") restart();
 });
 window.addEventListener("keyup", (e) => { keys[e.code] = false; });
 
 const hudScore = document.getElementById("score");
-const hudShields = document.getElementById("shields");
+const shieldFill = document.getElementById("shieldfill");
 const hudDist = document.getElementById("dist");
 const hudEmp = document.getElementById("emp");
 const reticle = document.querySelector(".crosshair");
@@ -1352,7 +1372,9 @@ function updateReticle() {
 }
 function setHUD() {
   hudScore.textContent = state.score;
-  hudShields.textContent = Math.max(0, state.shields | 0);
+  const pct = Math.max(0, Math.min(100, state.shields));
+  shieldFill.style.width = pct + "%";
+  shieldFill.style.background = pct > 50 ? "#7fffb0" : pct > 25 ? "#ffd166" : "#ff5555";
   hudDist.textContent = (state.dist | 0);
   hudEmp.textContent = state.emps;
 }
@@ -1364,6 +1386,7 @@ function restart() {
   }
   state.score = 0; state.shields = 100; state.dist = 0; state.alive = true;
   state.emps = 3; state.nextTieDist = 700; state.nextStrafeDist = 1100; state.nextSurfaceDist = 130;
+  state.entering = false; state.distAcc = 0;
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.05, actx.currentTime + 0.4);  // engine back up
   xwing.position.set(0, 0, 3);
   xwing.visible = true;
@@ -1426,6 +1449,9 @@ function update(dt) {
 
   const forward = state.speed * state.boostMul * 60 * dt;
   state.dist += forward;
+  // distance scoring: +1 point per 10m flown
+  state.distAcc += forward;
+  while (state.distAcc >= 10) { state.score += 1; state.distAcc -= 10; }
 
   // fire
   state.fireCool -= dt;
@@ -1672,16 +1698,52 @@ function update(dt) {
   setHUD();
 }
 
+// ---------- leaderboard (localStorage) ----------
+const LB_KEY = "womprat_lb";
+function loadLB() { try { return JSON.parse(localStorage.getItem(LB_KEY)) || []; } catch (e) { return []; } }
+function lbHTML(list, hi) {
+  if (!list.length) return '<div class="lb"><div class="row">NO SCORES YET</div></div>';
+  let rows = "";
+  list.forEach((e, i) => {
+    rows += '<div class="row' + (e === hi ? " me" : "") + '"><span>' + (i + 1) + '. ' + e.name + '</span><span>' + e.score + '</span></div>';
+  });
+  return '<div class="lb">' + rows + '</div>';
+}
+function submitScore(name, score) {
+  const lb = loadLB();
+  const entry = { name, score };
+  lb.push(entry);
+  lb.sort((a, b) => b.score - a.score);
+  const top = lb.slice(0, 10);
+  try { localStorage.setItem(LB_KEY, JSON.stringify(top)); } catch (e) {}
+  state.entering = false;
+  const c = document.getElementById("center");
+  c.innerHTML = '<h1>DESTROYED</h1><p>SCORE ' + score + '</p>' + lbHTML(top, entry) +
+    '<p class="blink" style="margin-top:14px">PRESS SPACE TO RETRY</p>';
+}
+
 function gameOver() {
+  if (!state.alive) return;
   state.alive = false;
+  state.entering = true;
   explode(xwing.position, 0xff3344, 48);
   sfxExplosion(true);
   setTimeout(sfxR2Sad, 350);   // R2's mournful warble after the boom
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.4);  // engine dies
   xwing.visible = false;
+  const score = state.score;
   const c = document.getElementById("center");
-  c.innerHTML = '<h1>DESTROYED</h1><p>SCORE ' + state.score + '</p><p>DISTANCE ' + (state.dist|0) + ' M</p><p class="blink">PRESS SPACE TO RETRY</p>';
+  c.innerHTML = '<h1>DESTROYED</h1><p>SCORE ' + score + '</p><p>DISTANCE ' + (state.dist | 0) + ' M</p>' +
+    '<p style="margin-top:12px">ENTER NAME</p>' +
+    '<input id="nameInput" maxlength="8" autocomplete="off" spellcheck="false">' +
+    lbHTML(loadLB(), null);
   c.classList.remove("hidden");
+  const inp = document.getElementById("nameInput");
+  setTimeout(() => inp.focus(), 40);
+  inp.addEventListener("keydown", (e) => {
+    e.stopPropagation();                       // typing must not trigger game controls
+    if (e.key === "Enter") submitScore((inp.value.trim() || "ACE").toUpperCase().slice(0, 8), score);
+  });
 }
 
 function loop() {
