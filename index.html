@@ -44,6 +44,7 @@
 <div id="hud">
   <div>SCORE <span id="score">0</span></div>
   <div>SHIELDS <span id="shields">100</span></div>
+  <div>EMP <span id="emp">3</span></div>
   <div>DIST <span id="dist">0</span> M</div>
 </div>
 <div class="crosshair"></div>
@@ -52,6 +53,7 @@
   <p>ARROWS / WASD &nbsp; MOVE</p>
   <p>SPACE &nbsp; FIRE</p>
   <p>SHIFT &nbsp; BOOST</p>
+  <p>E &nbsp; R2 EMP (clears all turrets)</p>
   <p class="blink" style="margin-top:18px">PRESS ANY KEY TO LAUNCH</p>
 </div>
 
@@ -482,9 +484,9 @@ function makeStarDestroyer() {
 
 // a fleet of three Star Destroyers at varied ranges
 const sdFleet = [
-  { pos: [-185, 64, -360], rot: [0.05, 0.6, 0.04], s: 1.1 },
-  { pos: [ 215, 98, -540], rot: [0.03, -0.85, -0.05], s: 1.5 },
-  { pos: [ -50, 150, -760], rot: [0.02, 0.25, 0.02], s: 2.3 },
+  { pos: [-300,  45, -280], rot: [0.05,  0.7, 0.05], s: 1.0 },   // far left, closer
+  { pos: [ 340, 130, -640], rot: [0.03, -0.9, -0.06], s: 1.9 },  // far right, high, deep
+  { pos: [  30, 240, -1000], rot: [0.02, 0.2, 0.02], s: 3.2 },   // way overhead, distant
 ];
 for (const f of sdFleet) {
   const sd = makeStarDestroyer();
@@ -804,7 +806,8 @@ function makeTurret(kind = 0) {
   g.scale.setScalar(scale);
 
   g.userData.head = head;
-  g.userData.health = heavy ? 4 : 3;     // ~40% tougher
+  // progressive difficulty: +1 HP per 2500m travelled
+  g.userData.health = (heavy ? 4 : 3) + Math.floor(state.dist / 2500);
   g.userData.cooldown = 1 + Math.random() * 2;
   g.userData.aimWorld = new THREE.Vector3();
   g.userData.hitR = 1.7 * scale;        // collision radius scales with the model
@@ -855,24 +858,21 @@ function makeLaser(color, haloColor) {
 }
 
 function findTarget(origin) {
-  // closest turret ahead of origin within a forward cone (aims at the gun head)
+  // closest turret or attacking TIE ahead of origin within a forward cone
   let best = null, bestScore = Infinity;
-  for (const t of turrets) {
+  const consider = (t, bias) => {
     const p = t.userData.aimWorld;
-    const dx = p.x - origin.x;
-    const dy = p.y - origin.y;
-    const dz = p.z - origin.z;
-    if (dz > -2) continue;                          // must be ahead
+    const dx = p.x - origin.x, dy = p.y - origin.y, dz = p.z - origin.z;
+    if (dz > -2) return;                              // must be ahead
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (dist > 180) continue;
-    // angle off forward (-Z) axis
+    if (dist > 180) return;
     const lateral = Math.sqrt(dx * dx + dy * dy);
-    const angle = Math.atan2(lateral, -dz);
-    if (angle > 0.55) continue;                     // ~31 deg cone
-    // prefer close + on-axis
-    const score = dist + lateral * 6;
+    if (Math.atan2(lateral, -dz) > 0.55) return;      // ~31 deg cone
+    const score = dist + lateral * 6 - bias;          // bias prioritises urgent threats
     if (score < bestScore) { bestScore = score; best = t; }
-  }
+  };
+  for (const t of turrets) consider(t, 0);
+  for (const t of trenchTies) consider(t, 120);       // prefer the incoming TIE
   return best;
 }
 
@@ -946,6 +946,86 @@ function explode(pos, color = 0xff7733, count = 14, scale = 1) {
   flashes.push(flash);
 }
 
+// ---------- in-trench attacking TIE fighters ----------
+const trenchTies = [];
+function makeTrenchTie() {
+  const g = new THREE.Group();
+  g.add(wire(new THREE.SphereGeometry(1.0, 8, 6), wireMat));                  // cockpit pod
+  for (const sx of [-1, 1]) {
+    const panel = wire(new THREE.CylinderGeometry(2.1, 2.1, 0.15, 6), wireMat); // hex solar wing
+    panel.rotation.x = Math.PI / 2;
+    panel.position.x = sx * 2.5;
+    g.add(panel);
+    const strut = wire(new THREE.BoxGeometry(1.5, 0.22, 0.22), wireMat);
+    strut.position.x = sx * 1.35;
+    g.add(strut);
+  }
+  optimizeStatic(g);
+  // red cockpit eye (threat marker, kept after merge so it stays red)
+  const eye = new THREE.Mesh(new THREE.SphereGeometry(0.36, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
+  eye.position.set(0, 0, -0.9);
+  g.add(eye);
+  return g;
+}
+function spawnTrenchTie() {
+  const t = makeTrenchTie();
+  t.scale.setScalar(1.0);
+  t.position.set((Math.random() - 0.5) * (TRENCH_W - 5), (Math.random() - 0.5) * (TRENCH_H - 5), -200);
+  t.userData.vel = new THREE.Vector3((Math.random() - 0.5) * 18, (Math.random() - 0.5) * 12, 78);  // units/sec, toward player
+  t.userData.health = 2;
+  t.userData.fireCool = 0.5 + Math.random();
+  t.userData.phase = Math.random() * Math.PI * 2;
+  t.userData.aimWorld = new THREE.Vector3();
+  t.userData.isTie = true;
+  t.userData.hitR = 2.0;
+  scene.add(t);
+  trenchTies.push(t);
+}
+function fireFromTie(t) {
+  const muzzle = t.position.clone();
+  const dir = new THREE.Vector3().subVectors(xwing.position, muzzle).normalize();
+  const shot = makeLaser(0x33ff66, 0xaaffcc);   // TIE green
+  shot.position.copy(muzzle);
+  shot.lookAt(muzzle.clone().add(dir));
+  shot.rotateX(Math.PI / 2);
+  shot.userData.vel = dir.multiplyScalar(1.4);
+  scene.add(shot);
+  enemyShots.push(shot);
+}
+
+// ---------- R2 EMP burst: 3 charges, clears every turret + TIE on screen ----------
+const empWaves = [];
+function empWave(pos) {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.8, 1.4, 40),
+    new THREE.MeshBasicMaterial({ color: 0xbfeaff, transparent: true, opacity: 0.95, side: THREE.DoubleSide })
+  );
+  ring.position.copy(pos);
+  ring.userData.life = 0.7;
+  ring.userData.maxLife = 0.7;
+  scene.add(ring);
+  empWaves.push(ring);
+}
+function fireEMP() {
+  if (!state.started || !state.alive || state.emps <= 0) return;
+  state.emps -= 1;
+  empWave(xwing.position.clone());
+  for (let j = turrets.length - 1; j >= 0; j--) {
+    const t = turrets[j];
+    explode(t.userData.aimWorld, 0xffaa33, 55, 2.2);
+    explode(t.userData.aimWorld, 0x88d8ff, 18, 1.3);
+    scene.remove(t); turrets.splice(j, 1);
+    state.score += 100;
+  }
+  for (let j = trenchTies.length - 1; j >= 0; j--) {
+    const t = trenchTies[j];
+    explode(t.position, 0x88d8ff, 26, 1.4);
+    scene.remove(t); trenchTies.splice(j, 1);
+    state.score += 150;
+  }
+  setHUD();
+}
+
 // ---------- speed streaks ----------
 const streaks = [];
 function spawnStreak() {
@@ -981,6 +1061,8 @@ const state = {
   started: false,
   fireCool: 0,
   nextTurretDist: 260,
+  emps: 3,
+  nextTieDist: 700,        // first attacking TIE after a short while
 };
 
 const keys = {};
@@ -991,6 +1073,7 @@ window.addEventListener("keydown", (e) => {
     document.getElementById("center").classList.add("hidden");
     seedTurrets();
   }
+  if (e.code === "KeyE" && !e.repeat) fireEMP();          // R2 EMP burst
   if (state.started && !state.alive && e.code === "Space") restart();
 });
 window.addEventListener("keyup", (e) => { keys[e.code] = false; });
@@ -998,6 +1081,7 @@ window.addEventListener("keyup", (e) => { keys[e.code] = false; });
 const hudScore = document.getElementById("score");
 const hudShields = document.getElementById("shields");
 const hudDist = document.getElementById("dist");
+const hudEmp = document.getElementById("emp");
 const reticle = document.querySelector(".crosshair");
 
 const _projVec = new THREE.Vector3();
@@ -1022,14 +1106,16 @@ function setHUD() {
   hudScore.textContent = state.score;
   hudShields.textContent = Math.max(0, state.shields | 0);
   hudDist.textContent = (state.dist | 0);
+  hudEmp.textContent = state.emps;
 }
 
 function restart() {
-  for (const arr of [playerShots, enemyShots, debris, turrets, flashes]) {
+  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves]) {
     for (const o of arr) scene.remove(o);
     arr.length = 0;
   }
   state.score = 0; state.shields = 100; state.dist = 0; state.alive = true;
+  state.emps = 3; state.nextTieDist = 700;
   xwing.position.set(0, 0, 3);
   xwing.visible = true;
   document.getElementById("center").classList.add("hidden");
@@ -1092,6 +1178,12 @@ function update(dt) {
     state.nextTurretDist = state.dist + 240 + Math.random() * 90;
   }
 
+  // occasional attacking TIE that strafes down the trench at you
+  if (state.dist >= state.nextTieDist) {
+    spawnTrenchTie();
+    state.nextTieDist = state.dist + 900 + Math.random() * 700;
+  }
+
   // streaks
   for (let i = streaks.length - 1; i >= 0; i--) {
     const s = streaks[i];
@@ -1121,20 +1213,46 @@ function update(dt) {
     if (t.position.z > 16) { scene.remove(t); turrets.splice(i, 1); continue; }
     t.userData.head.lookAt(xwing.position);
     t.userData.head.getWorldPosition(t.userData.aimWorld);   // gun position for aim/hit
-    if (t.position.z < -5 && t.position.z > -140) {
+    if (t.position.z < -5 && t.position.z > -150) {
       t.userData.cooldown -= dt;
       if (t.userData.cooldown <= 0) {
         fireFromTurret(t);
-        t.userData.cooldown = 0.9 + Math.random() * 1.6;
+        const dmul = Math.max(0.45, 1 - state.dist / 18000);   // fire faster the deeper you get
+        t.userData.cooldown = (0.9 + Math.random() * 1.6) * dmul;
       }
+    }
+  }
+
+  // attacking TIEs - strafe down the trench at the player
+  for (let i = trenchTies.length - 1; i >= 0; i--) {
+    const tie = trenchTies[i];
+    tie.userData.phase += dt * 4;
+    tie.position.x += Math.sin(tie.userData.phase) * 8 * dt;       // weave
+    tie.position.addScaledVector(tie.userData.vel, dt);
+    tie.userData.aimWorld.copy(tie.position);
+    tie.lookAt(xwing.position);
+    if (tie.position.distanceTo(xwing.position) < 2.4) {          // rammed the player
+      explode(tie.position, 0x88d8ff, 26, 1.4);
+      scene.remove(tie); trenchTies.splice(i, 1);
+      state.shields -= 22;
+      explode(xwing.position, 0xff3344, 8, 1);
+      if (state.shields <= 0) gameOver();
+      continue;
+    }
+    if (tie.position.z > 16 || Math.abs(tie.position.x) > 32 || Math.abs(tie.position.y) > 32) {
+      scene.remove(tie); trenchTies.splice(i, 1); continue;
+    }
+    if (tie.position.z < -6) {
+      tie.userData.fireCool -= dt;
+      if (tie.userData.fireCool <= 0) { fireFromTie(tie); tie.userData.fireCool = 0.8 + Math.random(); }
     }
   }
 
   // projectiles
   for (let i = playerShots.length - 1; i >= 0; i--) {
     const s = playerShots[i];
-    // mild in-flight homing on the target turret
-    if (s.userData.target && turrets.includes(s.userData.target)) {
+    // mild in-flight homing on the locked target (turret or TIE)
+    if (s.userData.target && (turrets.includes(s.userData.target) || trenchTies.includes(s.userData.target))) {
       const desired = new THREE.Vector3().subVectors(s.userData.target.userData.aimWorld, s.position).normalize().multiplyScalar(3.4);
       s.userData.vel.lerp(desired, 0.18);
       s.lookAt(s.position.clone().add(s.userData.vel));
@@ -1142,11 +1260,12 @@ function update(dt) {
     }
     s.position.add(s.userData.vel);
     if (s.position.z < -250 || s.position.z > 30) { scene.remove(s); playerShots.splice(i, 1); continue; }
+    let consumed = false;
     for (let j = turrets.length - 1; j >= 0; j--) {
       const t = turrets[j];
       if (s.position.distanceTo(t.userData.aimWorld) < (t.userData.hitR || 1.8)) {
         t.userData.health -= 1;
-        scene.remove(s); playerShots.splice(i, 1);
+        scene.remove(s); playerShots.splice(i, 1); consumed = true;
         if (t.userData.health <= 0) {
           // big secondary blast - two staged bursts for a meaty kill
           explode(t.userData.aimWorld, 0xffaa33, 70, 2.6);
@@ -1155,6 +1274,23 @@ function update(dt) {
           state.score += 100;
         } else {
           explode(t.userData.aimWorld, 0xffee66, 8, 0.9);
+        }
+        break;
+      }
+    }
+    if (consumed) continue;
+    for (let j = trenchTies.length - 1; j >= 0; j--) {
+      const tie = trenchTies[j];
+      if (s.position.distanceTo(tie.position) < (tie.userData.hitR || 2.0)) {
+        tie.userData.health -= 1;
+        scene.remove(s); playerShots.splice(i, 1);
+        if (tie.userData.health <= 0) {
+          explode(tie.position, 0xffaa33, 42, 1.8);
+          explode(tie.position, 0x88d8ff, 16, 1.1);
+          scene.remove(tie); trenchTies.splice(j, 1);
+          state.score += 150;
+        } else {
+          explode(tie.position, 0xffee66, 6, 0.8);
         }
         break;
       }
@@ -1195,6 +1331,17 @@ function update(dt) {
     f.scale.setScalar(1 + k * f.userData.grow);
     f.material.opacity = 0.95 * (1 - k);
     if (f.userData.life <= 0) { scene.remove(f); flashes.splice(i, 1); }
+  }
+
+  // EMP shockwave rings (sweep outward down the trench + fade)
+  for (let i = empWaves.length - 1; i >= 0; i--) {
+    const w = empWaves[i];
+    w.userData.life -= dt;
+    const k = 1 - Math.max(0, w.userData.life) / w.userData.maxLife;
+    w.scale.setScalar(1 + k * 45);
+    w.position.z -= dt * 30;
+    w.material.opacity = 0.95 * (1 - k);
+    if (w.userData.life <= 0) { scene.remove(w); empWaves.splice(i, 1); }
   }
 
   // camera follow
