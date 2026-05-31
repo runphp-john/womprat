@@ -487,21 +487,13 @@ function makeStarDestroyer() {
     dome.position.set(ox, TH + 23.5, -L * 0.06); g.add(dome);
   }
 
-  // three engine glow discs on the stern face
-  for (const ox of [-HW * 0.5, 0, HW * 0.5]) {
-    const e = new THREE.Mesh(new THREE.CircleGeometry(HW * 0.16, 16),
-      new THREE.MeshBasicMaterial({ color: 0x9fd0ff, transparent: true, opacity: 0.85, fog: false }));
-    e.position.set(ox, TH * 0.45, 0.5);
-    g.add(e);
-  }
-
   return g;
 }
 
-// two Star Destroyers spread across the sky
+// two Star Destroyers at distinct headings (banked / yawed differently)
 const sdFleet = [
-  { pos: [-280,  60, -380], rot: [0.05,  0.6, 0.05], s: 1.5 },   // left
-  { pos: [ 340, 140, -640], rot: [0.03, -0.85, -0.05], s: 2.2 }, // right, higher, deeper
+  { pos: [-300,  65, -440], rot: [ 0.10,  1.15, -0.22], s: 1.6 },  // left, banking, three-quarter
+  { pos: [ 340, 140, -600], rot: [-0.12, -1.70,  0.26], s: 2.2 },  // right, banking the other way, near broadside
 ];
 for (const f of sdFleet) {
   const sd = makeStarDestroyer();
