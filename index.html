@@ -67,14 +67,15 @@
   @keyframes shieldlow { 50% { opacity: 0.35; } }
   #hud .bar.low > i { animation: shieldlow 0.5s infinite; }
   /* boss health readout */
-  #boss {
+  #boss, #boba {
     position: fixed; top: 46px; left: 50%; transform: translateX(-50%);
     text-align: center; z-index: 9; pointer-events: none; text-shadow: 0 0 8px #ff6655;
   }
-  #boss .btitle { color: #ff8c70; font-size: 13px; letter-spacing: 5px; margin-bottom: 5px; }
-  #boss .brow { display: flex; gap: 14px; justify-content: center; }
-  #boss .bbar { display: inline-block; width: 132px; height: 9px; border: 1px solid #ff8c70; box-shadow: 0 0 7px rgba(255,90,70,0.5); }
-  #boss .bbar > i { display: block; height: 100%; width: 100%; background: #ff5a46; transition: width .1s linear; }
+  #boss .btitle, #boba .btitle { color: #ff8c70; font-size: 13px; letter-spacing: 5px; margin-bottom: 5px; }
+  #boss .brow, #boba .brow { display: flex; gap: 14px; justify-content: center; }
+  #boss .bbar, #boba .bbar { display: inline-block; width: 132px; height: 9px; border: 1px solid #ff8c70; box-shadow: 0 0 7px rgba(255,90,70,0.5); }
+  #boss .bbar > i, #boba .bbar > i { display: block; height: 100%; width: 100%; background: #ff5a46; transition: width .1s linear; }
+  #boba .bbar.wide { width: 280px; }
   /* centre announcements (boss start / cleared) */
   #banner {
     position: fixed; top: 30%; left: 50%; transform: translate(-50%, -50%);
@@ -114,6 +115,10 @@
 <div id="boss" class="hidden">
   <div class="btitle">MEGA TURRETS</div>
   <div class="brow"><span class="bbar"><i id="boss0"></i></span><span class="bbar"><i id="boss1"></i></span></div>
+</div>
+<div id="boba" class="hidden">
+  <div class="btitle">BOBA FETT</div>
+  <div class="brow"><span class="bbar wide"><i id="bobabar"></i></span></div>
 </div>
 <div id="banner"></div>
 <div id="center">
@@ -1124,9 +1129,12 @@ function seedTurrets() {
 
 // ---------- surface turbolasers on the trench rim, firing off into space ----------
 const surfaceTurrets = [];
-// ---------- mega turbolaser BOSS pair (the 300m showdown) ----------
+// ---------- mega turbolaser BOSS pair (the 3000m showdown) ----------
 const megaTurrets = [];
 let bannerTimer = 0;
+// ---------- Boba Fett jetpack BOSS (the 5000m timed duel) ----------
+let boba = null;
+const bobaMissiles = [];
 function spawnSurfaceTurret(zPos, side) {
   spawnSurfaceTurret.n = (spawnSurfaceTurret.n || 0) + 1;
   const hostile = spawnSurfaceTurret.n % 4 === 1;            // guaranteed 1 in 4 shoots at the player
@@ -1203,6 +1211,7 @@ function findTarget(origin) {
   for (const t of surfaceTurrets) consider(t, t.userData.hostile ? 60 : 0);  // rim cannons targetable too
   for (const t of trenchTies) consider(t, 120);       // prefer the incoming TIE
   for (const t of megaTurrets) consider(t, 240);      // the boss is the priority lock
+  if (boba && state.bobaActive) consider(boba, 240);  // lock Boba during his duel
   return best;
 }
 
@@ -1456,8 +1465,8 @@ function makeMegaTurret() {
   const scale = 1.75;
   g.scale.setScalar(scale);
   g.userData.head = head;
-  g.userData.health = 20;
-  g.userData.maxHealth = 20;
+  g.userData.health = 27;                // +35% tougher
+  g.userData.maxHealth = 27;
   g.userData.mega = true;
   g.userData.hitR = 5.5;                 // big, easy-to-hit boss target
   g.userData.cooldown = 0.9 + Math.random() * 0.8;
@@ -1542,6 +1551,104 @@ function damageMega(t, dmg) {
   }
 }
 
+// ---------- Boba Fett (timed jetpack duel) ----------
+function makeBoba() {
+  const g = new THREE.Group();
+  const M = turretMat;
+  g.add(edges(new THREE.BoxGeometry(0.62, 0.8, 0.4), M));                            // torso
+  const chest = edges(new THREE.BoxGeometry(0.5, 0.32, 0.12), M); chest.position.set(0, 0.12, 0.22); g.add(chest);
+  const helmet = edges(new THREE.CylinderGeometry(0.16, 0.24, 0.42, 8), M); helmet.position.y = 0.62; g.add(helmet);
+  for (const sx of [-1, 1]) { const arm = edges(new THREE.BoxGeometry(0.16, 0.6, 0.18), M); arm.position.set(sx * 0.42, -0.02, 0.02); g.add(arm); }
+  const blaster = edges(new THREE.CylinderGeometry(0.05, 0.05, 0.7, 6), M);          // blaster, +Z (toward player)
+  blaster.rotation.x = Math.PI / 2; blaster.position.set(0.48, -0.2, 0.34); g.add(blaster);
+  for (const sx of [-1, 1]) { const leg = edges(new THREE.BoxGeometry(0.2, 0.72, 0.22), M); leg.position.set(sx * 0.16, -0.74, 0); g.add(leg); }
+  const pack = edges(new THREE.BoxGeometry(0.52, 0.72, 0.3), M); pack.position.set(0, 0.12, -0.34); g.add(pack);   // jetpack
+  const packTop = edges(new THREE.CylinderGeometry(0.1, 0.17, 0.22, 6), M); packTop.position.set(0, 0.52, -0.34); g.add(packTop);
+  const cape = wire(new THREE.PlaneGeometry(0.52, 0.85), M); cape.position.set(0, -0.05, -0.22); g.add(cape);
+  // green T-visor + jetpack flame (their own meshes so they keep colour)
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.055, 0.05), new THREE.MeshBasicMaterial({ color: 0x32eb6e }));
+  visor.position.set(0, 0.6, 0.21); g.add(visor);
+  const flame = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.6, 8), new THREE.MeshBasicMaterial({ color: 0xff8c46 }));
+  flame.position.set(0, -0.4, -0.34); flame.rotation.x = Math.PI; g.add(flame);
+  g.userData.flame = flame;
+  g.scale.setScalar(3.4);
+  g.userData.aimWorld = new THREE.Vector3();
+  g.userData.fireCool = 1.0;
+  g.userData.missileCool = 4.0;
+  g.userData.wanderT = 0;
+  g.userData.target = new THREE.Vector3(0, 2.4, -22);
+  return g;
+}
+function makeBobaMissile(from) {
+  const grp = new THREE.Group(), M = turretMat;
+  const body = edges(new THREE.CylinderGeometry(0.16, 0.16, 1.0, 8), M); body.rotation.x = Math.PI / 2; grp.add(body);
+  const nose = edges(new THREE.ConeGeometry(0.16, 0.4, 8), M); nose.rotation.x = -Math.PI / 2; nose.position.z = 0.7; grp.add(nose);
+  for (const a of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+    const fin = edges(new THREE.BoxGeometry(0.04, 0.3, 0.3), M);
+    fin.position.set(Math.cos(a) * 0.16, Math.sin(a) * 0.16, -0.45); fin.rotation.z = a; grp.add(fin);
+  }
+  const glow = new THREE.Mesh(new THREE.CircleGeometry(0.14, 12), new THREE.MeshBasicMaterial({ color: 0xff8c46 }));
+  glow.position.z = -0.52; glow.rotation.y = Math.PI; grp.add(glow);
+  grp.position.copy(from);
+  grp.userData.vel = new THREE.Vector3().subVectors(xwing.position, from).normalize().multiplyScalar(0.7);
+  grp.userData.life = 4.5;
+  scene.add(grp); bobaMissiles.push(grp);
+}
+function fireBobaBlaster() {
+  if (!boba) return;
+  sfxTurretLaser();
+  const muzzle = new THREE.Vector3(0.48, -0.2, 0.7); boba.localToWorld(muzzle);
+  const dir = new THREE.Vector3().subVectors(xwing.position, muzzle).normalize();
+  const shot = makeLaser(0xff8c46, 0xffd0a0, 5);
+  shot.position.copy(muzzle);
+  shot.lookAt(muzzle.clone().add(dir)); shot.rotateX(Math.PI / 2);
+  shot.userData.vel = dir.multiplyScalar(1.2);
+  scene.add(shot); enemyShots.push(shot);
+}
+function fireBobaMissile() {
+  if (!boba) return;
+  sfxExplosion(false);
+  const from = new THREE.Vector3(0, -0.2, 0.3); boba.localToWorld(from);
+  makeBobaMissile(from);
+  bannerFlash("INCOMING MISSILE");
+}
+function startBoba() {
+  state.bobaActive = true;
+  for (const t of turrets) scene.remove(t);
+  turrets.length = 0;
+  for (const t of trenchTies) scene.remove(t);
+  trenchTies.length = 0;
+  boba = makeBoba();
+  boba.position.set(0, 2.4, -20);
+  scene.add(boba);
+  state.bobaTimer = 30;
+  bobaEl.classList.remove("hidden");
+  bobaBar.style.width = "100%";
+  bossDimEl.style.opacity = "1";
+  bannerFlash("BOBA FETT");
+  sfxR2Sad();
+}
+function endBoba() {
+  state.bobaActive = false;
+  state.bobaDone = true;
+  state.score += 1500;
+  if (boba) {
+    explode(boba.position, 0xffaa33, 80, 2.6);
+    explode(boba.position, 0x88d8ff, 24, 1.5);
+    sfxExplosion(true);
+    scene.remove(boba); boba = null;
+  }
+  for (const m of bobaMissiles) scene.remove(m);
+  bobaMissiles.length = 0;
+  bobaEl.classList.add("hidden");
+  bossDimEl.style.opacity = "0";
+  bannerFlash("BOBA FETT DOWN");
+  state.nextTurretDist = state.dist + 180;
+  state.nextTieDist = state.dist + 500;
+  state.nextSurfaceDist = state.dist + 90;
+  setHUD();
+}
+
 // ---------- speed streaks ----------
 const streaks = [];
 function spawnStreak() {
@@ -1589,6 +1696,10 @@ const state = {
   bossActive: false,        // duel in progress (world slows to a crawl)
   bossDone: false,          // showdown already cleared this run
   curSpeed: 1.0,            // eased speed multiplier (drops during the boss)
+  bobaDist: 5000,           // distance that triggers the Boba Fett duel
+  bobaActive: false,        // Boba jetpack fight in progress
+  bobaDone: false,          // Boba already beaten this run
+  bobaTimer: 0,             // seconds left in the 30s Boba fight
 };
 
 const keys = {};
@@ -1616,6 +1727,8 @@ const hudEmp = document.getElementById("emp");
 const bossEl = document.getElementById("boss");
 const bannerEl = document.getElementById("banner");
 const bossDimEl = document.getElementById("bossdim");
+const bobaEl = document.getElementById("boba");
+const bobaBar = document.getElementById("bobabar");
 const reticle = document.querySelector(".crosshair");
 
 const _projVec = new THREE.Vector3();
@@ -1646,15 +1759,18 @@ function setHUD() {
 }
 
 function restart() {
-  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves, surfaceTurrets, megaTurrets]) {
+  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves, surfaceTurrets, megaTurrets, bobaMissiles]) {
     for (const o of arr) scene.remove(o);
     arr.length = 0;
   }
+  if (boba) { scene.remove(boba); boba = null; }
   state.score = 0; state.shields = 100; state.dist = 0; state.alive = true;
   state.emps = 3; state.nextTieDist = 700; state.nextStrafeDist = 1100; state.nextSurfaceDist = 130;
   state.entering = false; state.distAcc = 0;
   state.bossActive = false; state.bossDone = false; state.curSpeed = 1.0;
-  bossEl.classList.add("hidden"); bannerEl.style.opacity = "0"; bannerTimer = 0; bossDimEl.style.opacity = "0";
+  state.bobaActive = false; state.bobaDone = false; state.bobaTimer = 0;
+  bossEl.classList.add("hidden"); bobaEl.classList.add("hidden");
+  bannerEl.style.opacity = "0"; bannerTimer = 0; bossDimEl.style.opacity = "0";
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.04, actx.currentTime + 0.4);  // engine back up
   xwing.position.set(0, 0, 3);
   xwing.visible = true;
@@ -1727,9 +1843,10 @@ function update(dt) {
   camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.12);
   camera.updateProjectionMatrix();
 
-  // boss showdown: at 300m the world eases to a crawl while the megas are up
+  // boss encounters: the world eases to a crawl while a boss is up
   if (!state.bossActive && !state.bossDone && state.dist >= state.bossDist) startBoss();
-  const speedTarget = state.bossActive ? 0.12 : 1.0;
+  if (!state.bobaActive && !state.bobaDone && state.dist >= state.bobaDist) startBoba();
+  const speedTarget = state.bossActive ? 0.12 : (state.bobaActive ? 0.2 : 1.0);
   state.curSpeed = THREE.MathUtils.lerp(state.curSpeed, speedTarget, 0.04);
   if (bannerTimer > 0) { bannerTimer -= dt; if (bannerTimer <= 0) bannerEl.style.opacity = "0"; }
 
@@ -1757,8 +1874,8 @@ function update(dt) {
     }
   }
 
-  // normal spawners pause during the boss duel
-  if (!state.bossActive) {
+  // normal spawners pause during any boss duel
+  if (!state.bossActive && !state.bobaActive) {
     // distance-based turret spawner - evenly spaced, appears within view range
     if (state.dist >= state.nextTurretDist) {
       spawnTurret(-300 + (Math.random() - 0.5) * 50);
@@ -1892,6 +2009,44 @@ function update(dt) {
     updateBossBars();
   }
 
+  // Boba Fett duel - jetpack around, blast + missile, 30s timer
+  if (state.bobaActive && boba) {
+    state.bobaTimer -= dt;
+    boba.userData.wanderT += dt;
+    const wt = boba.userData.wanderT;
+    boba.userData.target.set(Math.sin(wt * 0.9) * 5, 2.4 + Math.sin(wt * 1.7) * 2.6, -18 + Math.sin(wt * 0.6) * 7);
+    boba.position.lerp(boba.userData.target, 0.04);
+    boba.rotation.y = Math.atan2(xwing.position.x - boba.position.x, xwing.position.z - boba.position.z);  // face player, upright
+    boba.userData.aimWorld.copy(boba.position); boba.userData.aimWorld.y += 0.3;
+    if (boba.userData.flame) boba.userData.flame.scale.y = 0.7 + Math.random() * 0.6;
+    boba.userData.fireCool -= dt;
+    if (boba.userData.fireCool <= 0) { fireBobaBlaster(); boba.userData.fireCool = 0.55 + Math.random() * 0.6; }
+    boba.userData.missileCool -= dt;
+    if (boba.userData.missileCool <= 0) { fireBobaMissile(); boba.userData.missileCool = 6 + Math.random() * 3; }
+    bobaBar.style.width = Math.max(0, state.bobaTimer / 30) * 100 + "%";
+    if (state.bobaTimer <= 0) endBoba();
+  }
+
+  // Boba missiles - home gently toward the player; player can shoot them down
+  for (let i = bobaMissiles.length - 1; i >= 0; i--) {
+    const m = bobaMissiles[i];
+    const desired = new THREE.Vector3().subVectors(xwing.position, m.position).normalize().multiplyScalar(0.7);
+    m.userData.vel.lerp(desired, 0.04);
+    m.position.add(m.userData.vel);
+    m.lookAt(m.position.clone().add(m.userData.vel));
+    m.userData.life -= dt;
+    let gone = m.userData.life <= 0;
+    if (m.position.distanceTo(xwing.position) < 1.9) {
+      explode(m.position, 0xffaa33, 30, 1.8); sfxExplosion(true);
+      if (state.alive) {
+        state.shields -= 30; dmgFlash.style.opacity = "0.95";
+        if (state.shields <= 0) gameOver();
+      }
+      gone = true;
+    }
+    if (gone) { scene.remove(m); bobaMissiles.splice(i, 1); }
+  }
+
   // projectiles
   for (let i = playerShots.length - 1; i >= 0; i--) {
     const s = playerShots[i];
@@ -1911,6 +2066,27 @@ function update(dt) {
       if (s.position.distanceTo(t.userData.aimWorld) < (t.userData.hitR || 5)) {
         scene.remove(s); playerShots.splice(i, 1); consumed = true;
         damageMega(t, 1);
+        break;
+      }
+    }
+    if (consumed) continue;
+    // hits on Boba shave his timer (good shooting ends the fight sooner)
+    if (boba && state.bobaActive && s.position.distanceTo(boba.userData.aimWorld) < 2.8) {
+      scene.remove(s); playerShots.splice(i, 1); consumed = true;
+      explode(boba.userData.aimWorld, 0xffee66, 8, 0.9);
+      state.bobaTimer = Math.max(0, state.bobaTimer - 0.6);
+      bobaBar.style.width = Math.max(0, state.bobaTimer / 30) * 100 + "%";
+      if (state.bobaTimer <= 0) endBoba();
+    }
+    if (consumed) continue;
+    // shoot down incoming missiles
+    for (let j = bobaMissiles.length - 1; j >= 0; j--) {
+      const m = bobaMissiles[j];
+      if (s.position.distanceTo(m.position) < 1.2) {
+        scene.remove(s); playerShots.splice(i, 1); consumed = true;
+        explode(m.position, 0xffaa33, 18, 1.2); sfxExplosion(false);
+        scene.remove(m); bobaMissiles.splice(j, 1);
+        state.score += 50;
         break;
       }
     }
@@ -2065,7 +2241,8 @@ function gameOver() {
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.4);  // engine dies
   xwing.visible = false;
   dmgFlash.style.opacity = "0";   // clear the red damage border on death
-  bossEl.classList.add("hidden"); // drop the boss health readout if we died mid-duel
+  bossEl.classList.add("hidden"); // drop the boss readouts if we died mid-duel
+  bobaEl.classList.add("hidden");
   bannerEl.style.opacity = "0";
   bossDimEl.style.opacity = "0";
   const score = state.score;
