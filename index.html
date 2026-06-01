@@ -1393,15 +1393,81 @@ function fireEMP() {
 
 // ---------- mega turret boss (the 300m showdown) ----------
 function makeMegaTurret() {
-  const t = makeTurret(1, false);        // heavy head + red targeting eye
-  const scale = 3.5;
-  t.scale.setScalar(scale);
-  t.userData.health = 20;
-  t.userData.maxHealth = 20;
-  t.userData.mega = true;
-  t.userData.hitR = 1.7 * scale;         // big, easy-to-hit target
-  t.userData.cooldown = 0.6 + Math.random() * 0.7;
-  return t;
+  const g = new THREE.Group();
+  const M = turretMat;
+  // ---- broad, stacked emplacement base ----
+  const base = new THREE.Group();
+  const tiers = [[4.2, 1.5, 4.2, 0.75], [3.3, 1.4, 3.3, 2.1], [2.5, 1.2, 2.5, 3.3], [1.9, 1.0, 1.9, 4.3]];
+  for (const [w, h, d, y] of tiers) { const b = edges(new THREE.BoxGeometry(w, h, d), M); b.position.y = y; base.add(b); }
+  // corner buttress fins
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2 + Math.PI / 4;
+    const fin = edges(new THREE.BoxGeometry(0.5, 3.0, 1.2), M);
+    fin.position.set(Math.cos(a) * 1.9, 1.6, Math.sin(a) * 1.9); fin.rotation.y = a; base.add(fin);
+  }
+  // hull greebles clinging to the tower
+  for (let i = 0; i < 10; i++) {
+    const s = 0.35 + Math.random() * 0.6;
+    const gb = edges(new THREE.BoxGeometry(s, s, s), M);
+    const a = Math.random() * Math.PI * 2, r = 1.6 + Math.random() * 0.8;
+    gb.position.set(Math.cos(a) * r, 0.6 + Math.random() * 3.6, Math.sin(a) * r); base.add(gb);
+  }
+  g.add(base);
+
+  // ---- rotating head: TWO twin-barrel gun pods (four cannons) ----
+  const headY = 5.6;
+  const head = new THREE.Group();
+  head.position.y = headY;
+  head.add(edges(new THREE.BoxGeometry(3.0, 1.8, 2.6), M));            // command body
+  const cap = edges(new THREE.BoxGeometry(2.0, 0.6, 2.0), M); cap.position.y = 1.2; head.add(cap);
+  const mast = edges(new THREE.CylinderGeometry(0.07, 0.07, 1.6, 6), M); mast.position.set(0, 2.1, 0.2); head.add(mast);
+  const dish = wire(new THREE.SphereGeometry(0.4, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), M);
+  dish.position.set(0, 2.7, 0.2); dish.rotation.x = -0.5; head.add(dish);
+  // barrels sit on +Z so head.lookAt(player) (which aims +Z) points the guns AT you
+  const muzzles = [];
+  for (const px of [-1.15, 1.15]) {
+    const pod = edges(new THREE.BoxGeometry(1.1, 1.2, 1.4), M); pod.position.set(px, 0, 1.0); head.add(pod);
+    const mantlet = edges(new THREE.BoxGeometry(0.9, 0.8, 0.7), M); mantlet.position.set(px, 0, 1.7); head.add(mantlet);
+    for (const ox of [-0.32, 0.32]) {
+      const barrel = edges(new THREE.CylinderGeometry(0.15, 0.15, 4.4, 8), M);
+      barrel.rotation.x = Math.PI / 2; barrel.position.set(px + ox, 0, 3.0); head.add(barrel);
+      const muz = edges(new THREE.CylinderGeometry(0.24, 0.2, 0.6, 8), M);
+      muz.rotation.x = Math.PI / 2; muz.position.set(px + ox, 0, 5.2); head.add(muz);
+    }
+    muzzles.push(new THREE.Vector3(px, 0, 5.4));
+  }
+  g.add(head);
+  optimizeStatic(base); optimizeStatic(head);
+  // big red targeting eyes facing the player (one per pod) - added after merge to keep colour
+  for (const px of [-1.15, 1.15]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), new THREE.MeshBasicMaterial({ color: 0xff3322 }));
+    eye.position.set(px, 0.55, 1.5); head.add(eye);
+  }
+
+  const scale = 1.75;
+  g.scale.setScalar(scale);
+  g.userData.head = head;
+  g.userData.health = 20;
+  g.userData.maxHealth = 20;
+  g.userData.mega = true;
+  g.userData.hitR = 5.5;                 // big, easy-to-hit boss target
+  g.userData.cooldown = 0.9 + Math.random() * 0.8;
+  g.userData.aimWorld = new THREE.Vector3();
+  g.userData.muzzles = muzzles;          // two pods -> twin-bolt volleys
+  return g;
+}
+function fireFromMega(t) {
+  sfxTurretLaser();
+  for (const m of t.userData.muzzles) {
+    const muzzle = m.clone(); t.userData.head.localToWorld(muzzle);
+    const dir = new THREE.Vector3().subVectors(xwing.position, muzzle).normalize();
+    const shot = makeLaser(0x33ff66, 0xaaffcc, 8);
+    shot.position.copy(muzzle);
+    shot.lookAt(muzzle.clone().add(dir));
+    shot.rotateX(Math.PI / 2);
+    shot.userData.vel = dir.multiplyScalar(1.1);
+    scene.add(shot); enemyShots.push(shot);
+  }
 }
 function bannerFlash(text) {
   bannerEl.textContent = text;
@@ -1422,7 +1488,7 @@ function startBoss() {
   // two mega turbolasers planted on the trench floor, flanking centre, guns trained on you
   [-1, 1].forEach((side, idx) => {
     const t = makeMegaTurret();
-    t.position.set(side * 5, -TRENCH_H / 2, -52);
+    t.position.set(side * 5.2, -TRENCH_H / 2, -50);
     t.userData.bar = document.getElementById("boss" + idx);
     t.userData.head.getWorldPosition(t.userData.aimWorld);
     scene.add(t);
@@ -1439,7 +1505,7 @@ function endBoss() {
   state.bossDone = true;
   state.score += 1000;                   // clearance bonus
   bossEl.classList.add("hidden");
-  bannerFlash("TRENCH CLEAR");
+  bannerFlash("MEGA TURRETS CLEAR");
   setHUD();
   // resume the normal run just ahead of the player
   state.nextTurretDist = state.dist + 180;
@@ -1508,7 +1574,7 @@ const state = {
   bleepTimer: 8,            // countdown to the next ambient R2 chirp
   distAcc: 0,               // distance-score accumulator (+1 per 10m)
   entering: false,          // typing name into the leaderboard
-  bossDist: 300,            // distance that triggers the mega-turret showdown
+  bossDist: 3000,           // distance that triggers the mega-turret showdown
   bossActive: false,        // duel in progress (world slows to a crawl)
   bossDone: false,          // showdown already cleared this run
   curSpeed: 1.0,            // eased speed multiplier (drops during the boss)
@@ -1807,8 +1873,8 @@ function update(dt) {
       t.userData.head.getWorldPosition(t.userData.aimWorld);
       t.userData.cooldown -= dt;
       if (t.userData.cooldown <= 0) {
-        fireFromTurret(t);
-        t.userData.cooldown = 0.7 + Math.random() * 0.7;
+        fireFromMega(t);
+        t.userData.cooldown = 0.9 + Math.random() * 0.8;
       }
     }
     updateBossBars();
