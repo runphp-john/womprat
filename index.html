@@ -54,7 +54,25 @@
   #center .credit img { width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(150,200,255,0.5); }
   #center .credit span { font-size: 13px; letter-spacing: 3px; opacity: 0.9; }
   #center .blink { animation: blink 1s infinite; }
-  @keyframes blink { 50% { opacity: 0; } }
+  @keyframes blink { 50% { opacity: 0.25; } }
+  /* low-shield pulse - stays blue (just breathes) so it never reads as a colour change */
+  @keyframes shieldlow { 50% { opacity: 0.35; } }
+  #hud .bar.low > i { animation: shieldlow 0.5s infinite; }
+  /* boss health readout */
+  #boss {
+    position: fixed; top: 46px; left: 50%; transform: translateX(-50%);
+    text-align: center; z-index: 9; pointer-events: none; text-shadow: 0 0 8px #ff6655;
+  }
+  #boss .btitle { color: #ff8c70; font-size: 13px; letter-spacing: 5px; margin-bottom: 5px; }
+  #boss .brow { display: flex; gap: 14px; justify-content: center; }
+  #boss .bbar { display: inline-block; width: 132px; height: 9px; border: 1px solid #ff8c70; box-shadow: 0 0 7px rgba(255,90,70,0.5); }
+  #boss .bbar > i { display: block; height: 100%; width: 100%; background: #ff5a46; transition: width .1s linear; }
+  /* centre announcements (boss start / cleared) */
+  #banner {
+    position: fixed; top: 30%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 11; pointer-events: none; opacity: 0; transition: opacity .4s ease;
+    font-size: 34px; letter-spacing: 7px; color: #ffd0c0; text-shadow: 0 0 16px #ff5a46;
+  }
   .hidden { display: none !important; }
   .crosshair {
     position: fixed; top: 50%; left: 50%; width: 44px; height: 44px;
@@ -84,6 +102,11 @@
 </div>
 <div class="crosshair"></div>
 <div id="dmgflash"></div>
+<div id="boss" class="hidden">
+  <div class="btitle">MEGA TURRETS</div>
+  <div class="brow"><span class="bbar"><i id="boss0"></i></span><span class="bbar"><i id="boss1"></i></span></div>
+</div>
+<div id="banner"></div>
 <div id="center">
   <h1>WOMPRAT</h1>
   <div class="controls">
@@ -1092,6 +1115,9 @@ function seedTurrets() {
 
 // ---------- surface turbolasers on the trench rim, firing off into space ----------
 const surfaceTurrets = [];
+// ---------- mega turbolaser BOSS pair (the 300m showdown) ----------
+const megaTurrets = [];
+let bannerTimer = 0;
 function spawnSurfaceTurret(zPos, side) {
   spawnSurfaceTurret.n = (spawnSurfaceTurret.n || 0) + 1;
   const hostile = spawnSurfaceTurret.n % 4 === 1;            // guaranteed 1 in 4 shoots at the player
@@ -1167,6 +1193,7 @@ function findTarget(origin) {
   for (const t of turrets) consider(t, 0);
   for (const t of surfaceTurrets) consider(t, t.userData.hostile ? 60 : 0);  // rim cannons targetable too
   for (const t of trenchTies) consider(t, 120);       // prefer the incoming TIE
+  for (const t of megaTurrets) consider(t, 240);      // the boss is the priority lock
   return best;
 }
 
@@ -1359,7 +1386,83 @@ function fireEMP() {
     scene.remove(t); surfaceTurrets.splice(j, 1);
     state.score += 25;
   }
+  // boss megas shrug off the pulse - they just take a big chunk (10 each)
+  for (const t of [...megaTurrets]) damageMega(t, 10);
   setHUD();
+}
+
+// ---------- mega turret boss (the 300m showdown) ----------
+function makeMegaTurret() {
+  const t = makeTurret(1, false);        // heavy head + red targeting eye
+  const scale = 3.5;
+  t.scale.setScalar(scale);
+  t.userData.health = 20;
+  t.userData.maxHealth = 20;
+  t.userData.mega = true;
+  t.userData.hitR = 1.7 * scale;         // big, easy-to-hit target
+  t.userData.cooldown = 0.6 + Math.random() * 0.7;
+  return t;
+}
+function bannerFlash(text) {
+  bannerEl.textContent = text;
+  bannerEl.style.opacity = "1";
+  bannerTimer = 1.9;
+}
+function updateBossBars() {
+  for (const t of megaTurrets)
+    if (t.userData.bar) t.userData.bar.style.width = Math.max(0, t.userData.health / t.userData.maxHealth) * 100 + "%";
+}
+function startBoss() {
+  state.bossActive = true;
+  // clear the approaching rabble for a clean two-on-one duel
+  for (const t of turrets) scene.remove(t);
+  turrets.length = 0;
+  for (const t of trenchTies) scene.remove(t);
+  trenchTies.length = 0;
+  // two mega turbolasers planted on the trench floor, flanking centre, guns trained on you
+  [-1, 1].forEach((side, idx) => {
+    const t = makeMegaTurret();
+    t.position.set(side * 5, -TRENCH_H / 2, -52);
+    t.userData.bar = document.getElementById("boss" + idx);
+    t.userData.head.getWorldPosition(t.userData.aimWorld);
+    scene.add(t);
+    megaTurrets.push(t);
+  });
+  bossEl.classList.remove("hidden");
+  updateBossBars();
+  bannerFlash("MEGA TURRETS");
+  sfxExplosion(true);
+  sfxR2Bleep();
+}
+function endBoss() {
+  state.bossActive = false;
+  state.bossDone = true;
+  state.score += 1000;                   // clearance bonus
+  bossEl.classList.add("hidden");
+  bannerFlash("TRENCH CLEAR");
+  setHUD();
+  // resume the normal run just ahead of the player
+  state.nextTurretDist = state.dist + 180;
+  state.nextTieDist = state.dist + 500;
+  state.nextStrafeDist = state.dist + 900;
+  state.nextSurfaceDist = state.dist + 90;
+}
+function damageMega(t, dmg) {
+  t.userData.health -= dmg;
+  if (t.userData.bar) t.userData.bar.style.width = Math.max(0, t.userData.health / t.userData.maxHealth) * 100 + "%";
+  if (t.userData.health <= 0) {
+    const idx = megaTurrets.indexOf(t);
+    if (idx >= 0) megaTurrets.splice(idx, 1);
+    explode(t.userData.aimWorld, 0xffaa33, 90, 3.4);
+    explode(t.userData.aimWorld, 0xff5522, 44, 2.1);
+    explode(t.userData.aimWorld, 0x88d8ff, 22, 1.5);
+    sfxExplosion(true);
+    scene.remove(t);
+    state.score += 500;
+    if (megaTurrets.length === 0) endBoss();
+  } else {
+    explode(t.userData.aimWorld, 0xffee66, 12, 1.2);
+  }
 }
 
 // ---------- speed streaks ----------
@@ -1405,6 +1508,10 @@ const state = {
   bleepTimer: 8,            // countdown to the next ambient R2 chirp
   distAcc: 0,               // distance-score accumulator (+1 per 10m)
   entering: false,          // typing name into the leaderboard
+  bossDist: 300,            // distance that triggers the mega-turret showdown
+  bossActive: false,        // duel in progress (world slows to a crawl)
+  bossDone: false,          // showdown already cleared this run
+  curSpeed: 1.0,            // eased speed multiplier (drops during the boss)
 };
 
 const keys = {};
@@ -1429,6 +1536,8 @@ const shieldFill = document.getElementById("shieldfill");
 const dmgFlash = document.getElementById("dmgflash");
 const hudDist = document.getElementById("dist");
 const hudEmp = document.getElementById("emp");
+const bossEl = document.getElementById("boss");
+const bannerEl = document.getElementById("banner");
 const reticle = document.querySelector(".crosshair");
 
 const _projVec = new THREE.Vector3();
@@ -1453,18 +1562,21 @@ function setHUD() {
   hudScore.textContent = state.score;
   const pct = Math.max(0, Math.min(100, state.shields));
   shieldFill.style.width = pct + "%";
+  shieldFill.parentElement.classList.toggle("low", pct > 0 && pct <= 25);  // pulse when low
   hudDist.textContent = (state.dist | 0);
   hudEmp.textContent = state.emps;
 }
 
 function restart() {
-  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves, surfaceTurrets]) {
+  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves, surfaceTurrets, megaTurrets]) {
     for (const o of arr) scene.remove(o);
     arr.length = 0;
   }
   state.score = 0; state.shields = 100; state.dist = 0; state.alive = true;
   state.emps = 3; state.nextTieDist = 700; state.nextStrafeDist = 1100; state.nextSurfaceDist = 130;
   state.entering = false; state.distAcc = 0;
+  state.bossActive = false; state.bossDone = false; state.curSpeed = 1.0;
+  bossEl.classList.add("hidden"); bannerEl.style.opacity = "0"; bannerTimer = 0;
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.04, actx.currentTime + 0.4);  // engine back up
   xwing.position.set(0, 0, 3);
   xwing.visible = true;
@@ -1537,7 +1649,13 @@ function update(dt) {
   camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.12);
   camera.updateProjectionMatrix();
 
-  const forward = state.speed * state.boostMul * 60 * dt;
+  // boss showdown: at 300m the world eases to a crawl while the megas are up
+  if (!state.bossActive && !state.bossDone && state.dist >= state.bossDist) startBoss();
+  const speedTarget = state.bossActive ? 0.12 : 1.0;
+  state.curSpeed = THREE.MathUtils.lerp(state.curSpeed, speedTarget, 0.04);
+  if (bannerTimer > 0) { bannerTimer -= dt; if (bannerTimer <= 0) bannerEl.style.opacity = "0"; }
+
+  const forward = state.speed * state.boostMul * state.curSpeed * 60 * dt;
   state.dist += forward;
   // distance scoring: +1 point per 10m flown
   state.distAcc += forward;
@@ -1561,28 +1679,31 @@ function update(dt) {
     }
   }
 
-  // distance-based turret spawner - evenly spaced, appears within view range
-  if (state.dist >= state.nextTurretDist) {
-    spawnTurret(-300 + (Math.random() - 0.5) * 50);
-    state.nextTurretDist = state.dist + 240 + Math.random() * 90;
-  }
+  // normal spawners pause during the boss duel
+  if (!state.bossActive) {
+    // distance-based turret spawner - evenly spaced, appears within view range
+    if (state.dist >= state.nextTurretDist) {
+      spawnTurret(-300 + (Math.random() - 0.5) * 50);
+      state.nextTurretDist = state.dist + 240 + Math.random() * 90;
+    }
 
-  // occasional attacking TIE that strafes down the trench at you
-  if (state.dist >= state.nextTieDist) {
-    spawnTrenchTie();
-    state.nextTieDist = state.dist + 900 + Math.random() * 700;
-  }
+    // occasional attacking TIE that strafes down the trench at you
+    if (state.dist >= state.nextTieDist) {
+      spawnTrenchTie();
+      state.nextTieDist = state.dist + 900 + Math.random() * 700;
+    }
 
-  // occasional TIE diving in from the sky for a strafing run
-  if (state.dist >= state.nextStrafeDist) {
-    spawnStrafer();
-    state.nextStrafeDist = state.dist + 1100 + Math.random() * 900;
-  }
+    // occasional TIE diving in from the sky for a strafing run
+    if (state.dist >= state.nextStrafeDist) {
+      spawnStrafer();
+      state.nextStrafeDist = state.dist + 1100 + Math.random() * 900;
+    }
 
-  // rim turbolasers lining the trench top, firing into space
-  if (state.dist >= state.nextSurfaceDist) {
-    spawnSurfaceTurret(-300, Math.random() < 0.5 ? -1 : 1);
-    state.nextSurfaceDist = state.dist + 110 + Math.random() * 90;
+    // rim turbolasers lining the trench top, firing into space
+    if (state.dist >= state.nextSurfaceDist) {
+      spawnSurfaceTurret(-300, Math.random() < 0.5 ? -1 : 1);
+      state.nextSurfaceDist = state.dist + 110 + Math.random() * 90;
+    }
   }
 
   // streaks
@@ -1679,11 +1800,25 @@ function update(dt) {
     }
   }
 
+  // mega turret boss - hold station, track the player and pound away
+  if (state.bossActive) {
+    for (const t of megaTurrets) {
+      t.userData.head.lookAt(xwing.position);
+      t.userData.head.getWorldPosition(t.userData.aimWorld);
+      t.userData.cooldown -= dt;
+      if (t.userData.cooldown <= 0) {
+        fireFromTurret(t);
+        t.userData.cooldown = 0.7 + Math.random() * 0.7;
+      }
+    }
+    updateBossBars();
+  }
+
   // projectiles
   for (let i = playerShots.length - 1; i >= 0; i--) {
     const s = playerShots[i];
     // mild in-flight homing on the locked target (turret or TIE)
-    if (s.userData.target && (turrets.includes(s.userData.target) || trenchTies.includes(s.userData.target))) {
+    if (s.userData.target && (turrets.includes(s.userData.target) || trenchTies.includes(s.userData.target) || megaTurrets.includes(s.userData.target))) {
       const desired = new THREE.Vector3().subVectors(s.userData.target.userData.aimWorld, s.position).normalize().multiplyScalar(3.4);
       s.userData.vel.lerp(desired, 0.18);
       s.lookAt(s.position.clone().add(s.userData.vel));
@@ -1692,6 +1827,16 @@ function update(dt) {
     s.position.add(s.userData.vel);
     if (s.position.z < -250 || s.position.z > 30) { scene.remove(s); playerShots.splice(i, 1); continue; }
     let consumed = false;
+    // mega turret boss takes priority hits
+    for (let j = megaTurrets.length - 1; j >= 0; j--) {
+      const t = megaTurrets[j];
+      if (s.position.distanceTo(t.userData.aimWorld) < (t.userData.hitR || 5)) {
+        scene.remove(s); playerShots.splice(i, 1); consumed = true;
+        damageMega(t, 1);
+        break;
+      }
+    }
+    if (consumed) continue;
     for (let j = turrets.length - 1; j >= 0; j--) {
       const t = turrets[j];
       if (s.position.distanceTo(t.userData.aimWorld) < (t.userData.hitR || 1.8)) {
@@ -1841,11 +1986,14 @@ function gameOver() {
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.4);  // engine dies
   xwing.visible = false;
   dmgFlash.style.opacity = "0";   // clear the red damage border on death
+  bossEl.classList.add("hidden"); // drop the boss health readout if we died mid-duel
+  bannerEl.style.opacity = "0";
   const score = state.score;
   const c = document.getElementById("center");
   c.innerHTML = '<h1>DESTROYED</h1><p>SCORE ' + score + '</p><p>DISTANCE ' + (state.dist | 0) + ' M</p>' +
     '<p style="margin-top:12px">ENTER NAME</p>' +
     '<input id="nameInput" maxlength="8" autocomplete="off" spellcheck="false">' +
+    '<p style="font-size:11px;opacity:0.55;margin:2px 0 0">PRESS ENTER TO SAVE</p>' +
     lbHTML(loadLB(), null);
   c.classList.remove("hidden");
   const inp = document.getElementById("nameInput");
