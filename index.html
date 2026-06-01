@@ -20,7 +20,7 @@
   #bossdim {
     position: fixed; inset: 0; z-index: 1; pointer-events: none; opacity: 0;
     transition: opacity 0.7s ease;
-    background: radial-gradient(ellipse 60% 55% at 50% 42%, rgba(7,24,47,0) 35%, rgba(7,24,47,0.66) 100%);
+    background: radial-gradient(ellipse 72% 66% at 50% 42%, rgba(7,24,47,0) 35%, rgba(7,24,47,0.83) 100%);
   }
   #dmgflash {
     position: fixed; inset: 0; pointer-events: none; z-index: 8; opacity: 0;
@@ -820,6 +820,76 @@ function updateSkyBattle(dt) {
     l.position.addScaledVector(l.userData.vel, dt * 60);
     l.userData.life -= dt;
     if (l.userData.life <= 0) { scene.remove(l); skyLasers.splice(i, 1); }
+  }
+}
+
+// ---------- sky cameos: occasional joke fly-bys, slow overhead and out of shot ----------
+const cameos = [];
+const cameoTypes = ["enterprise", "superman", "sputnik", "jetpack", "liberator"];
+function makeCameo(type) {
+  const g = new THREE.Group();
+  const M = sdMat;
+  if (type === "enterprise") {
+    g.add(wire(new THREE.CylinderGeometry(2.4, 2.4, 0.4, 20), M));                                  // saucer
+    const dome = wire(new THREE.SphereGeometry(0.7, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2), M); dome.position.y = 0.28; g.add(dome);
+    const neck = wire(new THREE.BoxGeometry(0.5, 0.7, 1.3), M); neck.position.set(0, -0.55, -1.3); g.add(neck);
+    const hull = wire(new THREE.CylinderGeometry(0.55, 0.4, 3.2, 12), M); hull.rotation.x = Math.PI / 2; hull.position.set(0, -0.95, -2.6); g.add(hull);
+    for (const sx of [-1, 1]) {
+      const pylon = wire(new THREE.BoxGeometry(0.16, 1.3, 0.9), M); pylon.position.set(sx * 1.0, -0.1, -2.8); pylon.rotation.x = 0.5; g.add(pylon);
+      const nac = wire(new THREE.CylinderGeometry(0.3, 0.26, 3.6, 10), M); nac.rotation.x = Math.PI / 2; nac.position.set(sx * 1.55, 0.55, -3.2); g.add(nac);
+    }
+    g.scale.setScalar(1.5);
+  } else if (type === "superman") {
+    const body = wire(new THREE.CylinderGeometry(0.34, 0.28, 1.4, 8), M); body.rotation.x = Math.PI / 2; g.add(body);
+    const head = wire(new THREE.SphereGeometry(0.3, 8, 6), M); head.position.z = 1.0; g.add(head);
+    for (const sx of [-1, 1]) { const arm = wire(new THREE.CylinderGeometry(0.11, 0.09, 1.0, 6), M); arm.rotation.x = Math.PI / 2; arm.position.set(sx * 0.28, 0.04, 1.05); g.add(arm); }
+    for (const sx of [-1, 1]) { const leg = wire(new THREE.CylinderGeometry(0.13, 0.09, 1.1, 6), M); leg.rotation.x = Math.PI / 2; leg.position.set(sx * 0.17, 0, -1.0); g.add(leg); }
+    const cape = wire(new THREE.PlaneGeometry(0.95, 1.4), new THREE.LineBasicMaterial({ color: 0xff463c })); cape.position.set(0, 0.12, -0.85); cape.rotation.x = -0.45; g.add(cape);
+    g.scale.setScalar(1.7);
+  } else if (type === "sputnik") {
+    g.add(wire(new THREE.SphereGeometry(0.8, 10, 8), M));
+    for (const d of [[1, 1, -1], [-1, 1, -1], [1, -1, -1], [-1, -1, -1]]) {
+      const ant = wire(new THREE.CylinderGeometry(0.03, 0.03, 2.6, 5), M);
+      const dir = new THREE.Vector3(d[0], d[1], d[2]).normalize();
+      ant.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      ant.position.copy(dir).multiplyScalar(1.3); g.add(ant);
+    }
+    g.scale.setScalar(1.6);
+  } else if (type === "jetpack") {
+    g.add(wire(new THREE.BoxGeometry(0.5, 0.8, 0.35), M));
+    const head = wire(new THREE.SphereGeometry(0.22, 8, 6), M); head.position.y = 0.6; g.add(head);
+    for (const sx of [-1, 1]) { const arm = wire(new THREE.BoxGeometry(0.13, 0.55, 0.15), M); arm.position.set(sx * 0.35, -0.05, 0.05); g.add(arm); }
+    for (const sx of [-1, 1]) { const leg = wire(new THREE.BoxGeometry(0.16, 0.6, 0.18), M); leg.position.set(sx * 0.14, -0.7, 0); g.add(leg); }
+    const pack = wire(new THREE.BoxGeometry(0.46, 0.6, 0.28), M); pack.position.set(0, 0.1, -0.32); g.add(pack);
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.5, 8), new THREE.MeshBasicMaterial({ color: 0xff8c46 })); flame.position.set(0, -0.36, -0.32); flame.rotation.x = Math.PI; g.add(flame);
+    g.userData.flame = flame;
+    g.scale.setScalar(2.2);
+  } else {  // Blake's 7 Liberator
+    const neck = wire(new THREE.CylinderGeometry(0.18, 0.7, 2.4, 10), M); neck.rotation.x = Math.PI / 2; neck.position.z = 1.7; g.add(neck);
+    g.add(wire(new THREE.SphereGeometry(1.1, 12, 8), M));
+    g.add(wire(new THREE.TorusGeometry(1.35, 0.12, 6, 18), M));
+    const rear = wire(new THREE.CylinderGeometry(0.7, 1.0, 1.6, 12), M); rear.rotation.x = Math.PI / 2; rear.position.z = -1.5; g.add(rear);
+    for (const sx of [-1, 1]) { const pod = wire(new THREE.CylinderGeometry(0.24, 0.24, 2.4, 8), M); pod.rotation.x = Math.PI / 2; pod.position.set(sx * 1.4, -0.2, -0.7); g.add(pod); }
+    g.scale.setScalar(1.7);
+  }
+  return g;
+}
+function spawnCameo() {
+  if (cameos.length) return;                                   // one joke at a time
+  const type = cameoTypes[Math.floor(Math.random() * cameoTypes.length)];
+  const c = makeCameo(type);
+  const side = Math.random() < 0.5 ? -1 : 1;
+  c.position.set(side * 170, 30 + Math.random() * 32, -80 - Math.random() * 70);
+  c.userData.vel = new THREE.Vector3(-side * (0.32 + Math.random() * 0.22), (Math.random() - 0.5) * 0.08, (Math.random() - 0.5) * 0.18);
+  scene.add(c); cameos.push(c);
+}
+function updateCameos(dt) {
+  for (let i = cameos.length - 1; i >= 0; i--) {
+    const c = cameos[i];
+    c.position.addScaledVector(c.userData.vel, dt * 60);
+    c.lookAt(c.position.clone().add(c.userData.vel));           // face direction of travel
+    if (c.userData.flame) c.userData.flame.scale.y = 0.7 + Math.random() * 0.5;
+    if (Math.abs(c.position.x) > 200) { scene.remove(c); cameos.splice(i, 1); }
   }
 }
 
@@ -1700,6 +1770,7 @@ const state = {
   bobaActive: false,        // Boba jetpack fight in progress
   bobaDone: false,          // Boba already beaten this run
   bobaTimer: 0,             // seconds left in the 30s Boba fight
+  nextCameoDist: 350,       // distance to the next overhead joke fly-by
 };
 
 const keys = {};
@@ -1759,7 +1830,7 @@ function setHUD() {
 }
 
 function restart() {
-  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves, surfaceTurrets, megaTurrets, bobaMissiles]) {
+  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves, surfaceTurrets, megaTurrets, bobaMissiles, cameos]) {
     for (const o of arr) scene.remove(o);
     arr.length = 0;
   }
@@ -1769,6 +1840,7 @@ function restart() {
   state.entering = false; state.distAcc = 0;
   state.bossActive = false; state.bossDone = false; state.curSpeed = 1.0;
   state.bobaActive = false; state.bobaDone = false; state.bobaTimer = 0;
+  state.nextCameoDist = 350;
   bossEl.classList.add("hidden"); bobaEl.classList.add("hidden");
   bannerEl.style.opacity = "0"; bannerTimer = 0; bossDimEl.style.opacity = "0";
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.04, actx.currentTime + 0.4);  // engine back up
@@ -1898,6 +1970,12 @@ function update(dt) {
     if (state.dist >= state.nextSurfaceDist) {
       spawnSurfaceTurret(-300, Math.random() < 0.5 ? -1 : 1);
       state.nextSurfaceDist = state.dist + 110 + Math.random() * 90;
+    }
+
+    // occasional joke fly-by drifting overhead
+    if (state.dist >= state.nextCameoDist) {
+      spawnCameo();
+      state.nextCameoDist = state.dist + 900 + Math.random() * 1500;
     }
   }
 
@@ -2265,6 +2343,7 @@ function loop() {
   const dt = Math.min(clock.getDelta(), 0.05);
   update(dt);
   updateSkyBattle(dt);     // background dogfight runs always
+  updateCameos(dt);        // joke fly-bys finish crossing even on menus
   composer.render();
   requestAnimationFrame(loop);
 }
