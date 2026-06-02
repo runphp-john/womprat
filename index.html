@@ -1895,7 +1895,7 @@ function update(dt) {
       spawnSparks(cp, 1);
     }
     dmgFlash.style.opacity = "0.85";          // red edge flash while scraping
-    state.shields -= 16 * dt;
+    state.shields -= 12.8 * dt;
     state.scrapeSnd -= dt;
     if (state.scrapeSnd <= 0) { sfxScrape(); state.scrapeSnd = 0.09; }
     if (state.shields <= 0) { gameOver(); return; }
@@ -2041,7 +2041,7 @@ function update(dt) {
       explode(tie.position, 0x88d8ff, 26, 1.4);
       sfxExplosion(false);
       scene.remove(tie); trenchTies.splice(i, 1);
-      state.shields -= 22;
+      state.shields -= 17.6;
       explode(xwing.position, 0xff3344, 8, 1);
       if (state.shields <= 0) gameOver();
       continue;
@@ -2129,7 +2129,7 @@ function update(dt) {
     if (m.position.distanceTo(xwing.position) < 1.9) {
       explode(m.position, 0xffaa33, 30, 1.8); sfxExplosion(true);
       if (state.alive) {
-        state.shields -= 30; dmgFlash.style.opacity = "0.95";
+        state.shields -= 24; dmgFlash.style.opacity = "0.95";
         if (state.shields <= 0) gameOver();
       }
       gone = true;
@@ -2247,7 +2247,7 @@ function update(dt) {
     if (s.position.distanceTo(xwing.position) < 1.6) {
       scene.remove(s); enemyShots.splice(i, 1);
       if (!state.alive) continue;           // already destroyed this frame - don't re-flash the border
-      state.shields -= 12;
+      state.shields -= 9.6;
       explode(xwing.position, 0xff3344, 6);
       sfxExplosion(false);
       dmgFlash.style.opacity = "0.9";       // red flash on taking a hit
