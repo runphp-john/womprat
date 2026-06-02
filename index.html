@@ -826,6 +826,7 @@ function updateSkyBattle(dt) {
 // ---------- sky cameos: occasional joke fly-bys, slow overhead and out of shot ----------
 const cameos = [];
 const cameoTypes = ["enterprise", "superman", "sputnik", "jetpack", "liberator"];
+let cameoBag = [];
 function makeCameo(type) {
   const g = new THREE.Group();
   const M = sdMat;
@@ -876,7 +877,12 @@ function makeCameo(type) {
 }
 function spawnCameo() {
   if (cameos.length) return;                                   // one joke at a time
-  const type = cameoTypes[Math.floor(Math.random() * cameoTypes.length)];
+  // shuffle-bag: every type shows once per cycle, so none clusters (looking at you, Sputnik)
+  if (cameoBag.length === 0) {
+    cameoBag = cameoTypes.slice();
+    for (let i = cameoBag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = cameoBag[i]; cameoBag[i] = cameoBag[j]; cameoBag[j] = t; }
+  }
+  const type = cameoBag.pop();
   const c = makeCameo(type);
   const side = Math.random() < 0.5 ? -1 : 1;
   c.position.set(side * 170, 30 + Math.random() * 32, -80 - Math.random() * 70);
@@ -1641,6 +1647,11 @@ function makeBoba() {
   const flame = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.6, 8), new THREE.MeshBasicMaterial({ color: 0xff8c46 }));
   flame.position.set(0, -0.4, -0.34); flame.rotation.x = Math.PI; g.add(flame);
   g.userData.flame = flame;
+  // focus glow so he never gets lost against the busy wireframe (the vignette treatment, on him)
+  const halo = new THREE.Mesh(new THREE.CircleGeometry(1.55, 24),
+    new THREE.MeshBasicMaterial({ color: 0xff8c46, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending, depthWrite: false }));
+  halo.position.set(0, 0, -0.55); g.add(halo);
+  g.userData.halo = halo;
   g.scale.setScalar(3.4);
   g.userData.aimWorld = new THREE.Vector3();
   g.userData.fireCool = 1.0;
@@ -1691,7 +1702,7 @@ function startBoba() {
   boba = makeBoba();
   boba.position.set(0, 2.4, -20);
   scene.add(boba);
-  state.bobaTimer = 30;
+  state.bobaTimer = 45;
   bobaEl.classList.remove("hidden");
   bobaBar.style.width = "100%";
   bossDimEl.style.opacity = "1";
@@ -1769,7 +1780,7 @@ const state = {
   bobaDist: 5000,           // distance that triggers the Boba Fett duel
   bobaActive: false,        // Boba jetpack fight in progress
   bobaDone: false,          // Boba already beaten this run
-  bobaTimer: 0,             // seconds left in the 30s Boba fight
+  bobaTimer: 0,             // seconds left in the 45s Boba fight
   nextCameoDist: 350,       // distance to the next overhead joke fly-by
 };
 
@@ -2087,7 +2098,7 @@ function update(dt) {
     updateBossBars();
   }
 
-  // Boba Fett duel - jetpack around, blast + missile, 30s timer
+  // Boba Fett duel - jetpack around, blast + missile, 45s timer
   if (state.bobaActive && boba) {
     state.bobaTimer -= dt;
     boba.userData.wanderT += dt;
@@ -2097,11 +2108,12 @@ function update(dt) {
     boba.rotation.y = Math.atan2(xwing.position.x - boba.position.x, xwing.position.z - boba.position.z);  // face player, upright
     boba.userData.aimWorld.copy(boba.position); boba.userData.aimWorld.y += 0.3;
     if (boba.userData.flame) boba.userData.flame.scale.y = 0.7 + Math.random() * 0.6;
+    if (boba.userData.halo) boba.userData.halo.material.opacity = 0.36 + 0.14 * Math.sin(boba.userData.wanderT * 4);
     boba.userData.fireCool -= dt;
     if (boba.userData.fireCool <= 0) { fireBobaBlaster(); boba.userData.fireCool = 0.55 + Math.random() * 0.6; }
     boba.userData.missileCool -= dt;
     if (boba.userData.missileCool <= 0) { fireBobaMissile(); boba.userData.missileCool = 6 + Math.random() * 3; }
-    bobaBar.style.width = Math.max(0, state.bobaTimer / 30) * 100 + "%";
+    bobaBar.style.width = Math.max(0, state.bobaTimer / 45) * 100 + "%";
     if (state.bobaTimer <= 0) endBoba();
   }
 
@@ -2153,7 +2165,7 @@ function update(dt) {
       scene.remove(s); playerShots.splice(i, 1); consumed = true;
       explode(boba.userData.aimWorld, 0xffee66, 8, 0.9);
       state.bobaTimer = Math.max(0, state.bobaTimer - 0.6);
-      bobaBar.style.width = Math.max(0, state.bobaTimer / 30) * 100 + "%";
+      bobaBar.style.width = Math.max(0, state.bobaTimer / 45) * 100 + "%";
       if (state.bobaTimer <= 0) endBoba();
     }
     if (consumed) continue;
