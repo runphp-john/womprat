@@ -2489,7 +2489,7 @@ function gameOver() {
   setTimeout(() => inp.focus(), 40);
   inp.addEventListener("keydown", (e) => {
     e.stopPropagation();                       // typing must not trigger game controls
-    if (e.key === "Enter") submitScore((inp.value.trim() || "ACE").toUpperCase().slice(0, 8), score);
+    if (e.key === "Enter") submitScore((inp.value.trim() || "LUKE").toUpperCase().slice(0, 8), score);
   });
 }
 
