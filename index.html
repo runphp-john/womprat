@@ -11,6 +11,7 @@
     text-shadow: 0 0 6px #bfe0ff; font-size: 16px; letter-spacing: 2px;
     z-index: 10;
   }
+  #hud #combo { color: #ffd166; text-shadow: 0 0 8px #ffd166; letter-spacing: 1px; }
   #hud .bar {
     display: inline-block; width: 110px; height: 12px; margin-left: 6px;
     border: 1px solid #bfe0ff; vertical-align: middle; box-shadow: 0 0 6px rgba(143,182,230,0.4);
@@ -104,7 +105,7 @@
 </head>
 <body>
 <div id="hud">
-  <div>SCORE <span id="score">0</span></div>
+  <div>SCORE <span id="score">0</span> <span id="combo"></span></div>
   <div>SHIELDS <span class="bar"><i id="shieldfill"></i></span></div>
   <div>EMP <span id="emp">3</span></div>
   <div>DIST <span id="dist">0</span> M</div>
@@ -266,7 +267,7 @@ scene.add(rimLight);
 // Evokes the originals: blasters = downward "twang" sweep (Ben Burtt's radio-tower
 // guy-wire), TIE = wailing vibrato scream, explosions = filtered noise + low boom,
 // X-wing = filtered jet-engine hum that opens up on boost.
-let actx = null, masterGain = null, engine = null, audioOn = true;
+let actx = null, masterGain = null, engine = null, audioOn = true, music = null;
 function initAudio() {
   if (actx) return;
   try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
@@ -338,6 +339,62 @@ function sfxTieScream() {
   g.gain.linearRampToValueAtTime(0.0001, t + dur);
   o.connect(flt); flt.connect(g); g.connect(masterGain);
   o.start(t); lfo.start(t); o.stop(t + dur); lfo.stop(t + dur);
+}
+// ---------- music bed: a slow, ominous synth pulse (tenser during bosses) ----------
+function playMusicNote(time, freq, dur, type, vol) {
+  if (!music) return;
+  const o = actx.createOscillator(); o.type = type; o.frequency.value = freq;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, time);
+  g.gain.exponentialRampToValueAtTime(vol, time + 0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+  o.connect(g); g.connect(music.bus);
+  o.start(time); o.stop(time + dur + 0.03);
+}
+function startMusic() {
+  if (!actx || music) return;
+  const bus = actx.createGain(); bus.gain.value = 0.0; bus.connect(masterGain);
+  bus.gain.linearRampToValueAtTime(0.42, actx.currentTime + 2.0);   // gentle fade-in
+  music = { bus, nextNoteTime: actx.currentTime + 0.15, step: 0 };
+}
+function stopMusic() {
+  if (!music) return;
+  const m = music; music = null;
+  try {
+    m.bus.gain.cancelScheduledValues(actx.currentTime);
+    m.bus.gain.setValueAtTime(m.bus.gain.value, actx.currentTime);
+    m.bus.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.7);
+  } catch (e) {}
+}
+const MUSIC_ROOTS = [55, 55, 43.65, 49];   // A1, A1, F1, G1 - a brooding minor cycle
+function updateMusic() {
+  if (!music || !actx) return;
+  const ahead = actx.currentTime + 0.25;
+  const boss = state.bossActive || state.bobaActive;
+  const tempo = boss ? 0.24 : 0.36;         // seconds per step (faster = tenser during bosses)
+  while (music.nextNoteTime < ahead) {
+    const s = music.step % 16;
+    const root = MUSIC_ROOTS[Math.floor(s / 4)];
+    playMusicNote(music.nextNoteTime, root, tempo * 0.9, "triangle", boss ? 0.42 : 0.3);   // bass pulse
+    if (s % 2 === 0) playMusicNote(music.nextNoteTime, root / 2, tempo * 1.5, "sine", 0.26); // sub
+    if (s === 0 || s === 6 || s === 10) playMusicNote(music.nextNoteTime, root * 3, tempo * 1.1, "sawtooth", boss ? 0.1 : 0.05); // accent
+    if (boss && s % 4 === 0) playMusicNote(music.nextNoteTime, root * 1.5, tempo * 2.2, "sine", 0.09); // tension drone
+    music.nextNoteTime += tempo;
+    music.step++;
+  }
+}
+function sfxPickup() {
+  if (!actx || !audioOn) return;
+  const t = actx.currentTime;
+  [880, 1320].forEach((f, i) => {
+    const o = actx.createOscillator(); o.type = "triangle"; o.frequency.value = f;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t + i * 0.08);
+    g.gain.exponentialRampToValueAtTime(0.12, t + i * 0.08 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.08 + 0.2);
+    o.connect(g); g.connect(masterGain);
+    o.start(t + i * 0.08); o.stop(t + i * 0.08 + 0.22);
+  });
 }
 function startEngine() {
   if (!actx || engine) return;
@@ -899,6 +956,47 @@ function updateCameos(dt) {
   }
 }
 
+// ---------- trench pickups: shield repair + spare EMP ----------
+const pickups = [];
+function makePickup(kind) {
+  const g = new THREE.Group();
+  const isEmp = kind === "emp";
+  const col = isEmp ? 0x9cc8ff : 0x6effa8;                 // EMP = ice blue, shield = green
+  g.add(new THREE.Mesh(new THREE.TorusGeometry(0.7, 0.08, 8, 20), new THREE.MeshBasicMaterial({ color: col })));
+  if (isEmp) {
+    g.add(new THREE.Mesh(new THREE.OctahedronGeometry(0.34), new THREE.MeshBasicMaterial({ color: col })));
+  } else {                                                  // a "+" repair cross
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.16, 0.16), new THREE.MeshBasicMaterial({ color: col })));
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.62, 0.16), new THREE.MeshBasicMaterial({ color: col })));
+  }
+  const glow = new THREE.Mesh(new THREE.CircleGeometry(0.95, 18),
+    new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending, depthWrite: false }));
+  glow.position.z = -0.12; g.add(glow);
+  g.userData.kind = kind; g.userData.col = col;
+  return g;
+}
+function spawnPickup() {
+  const p = makePickup(Math.random() < 0.5 ? "shield" : "emp");
+  p.position.set((Math.random() - 0.5) * (TRENCH_W - 5), (Math.random() - 0.5) * (TRENCH_H - 5), -300);
+  scene.add(p); pickups.push(p);
+}
+function updatePickups(dt, scroll) {
+  for (let i = pickups.length - 1; i >= 0; i--) {
+    const p = pickups[i];
+    p.position.z += scroll;
+    p.rotation.y += dt * 2.2; p.rotation.z += dt * 1.3;
+    if (p.position.distanceTo(xwing.position) < 2.5) {       // collected
+      if (p.userData.kind === "shield") state.shields = Math.min(100, state.shields + 30);
+      else state.emps = Math.min(6, state.emps + 1);
+      explode(p.position, p.userData.col, 16, 1.0);
+      sfxPickup();
+      scene.remove(p); pickups.splice(i, 1); setHUD();
+      continue;
+    }
+    if (p.position.z > 16) { scene.remove(p); pickups.splice(i, 1); }
+  }
+}
+
 // ---------- X-WING (proper) ----------
 function makeXWing() {
   const g = new THREE.Group();
@@ -1335,6 +1433,7 @@ function fireFromTurret(t) {
 const debris = [];
 const flashes = [];
 function explode(pos, color = 0xff7733, count = 14, scale = 1) {
+  if (count >= 24) addShake(Math.min(1.0, count / 110 * scale));   // only meaty blasts shake the camera
   for (let i = 0; i < count; i++) {
     const sz = (0.18 + Math.random() * 0.18) * scale;
     const g = new THREE.BoxGeometry(sz, sz, sz);
@@ -1620,7 +1719,7 @@ function damageMega(t, dmg) {
     explode(t.userData.aimWorld, 0x88d8ff, 22, 1.5);
     sfxExplosion(true);
     scene.remove(t);
-    state.score += 500;
+    scoreKill(500);
     if (megaTurrets.length === 0) endBoss();
   } else {
     explode(t.userData.aimWorld, 0xffee66, 12, 1.2);
@@ -1782,6 +1881,12 @@ const state = {
   bobaDone: false,          // Boba already beaten this run
   bobaTimer: 0,             // seconds left in the 45s Boba fight
   nextCameoDist: 350,       // distance to the next overhead joke fly-by
+  combo: 0,                 // consecutive-kill streak
+  comboTimer: 0,            // seconds left before the streak resets
+  camShake: 0,              // screen-shake intensity (decays)
+  nextPickupDist: 550,      // distance to the next trench pickup
+  warnedBoss: false,        // mega-turret approach warning shown
+  warnedBoba: false,        // Boba approach warning shown
 };
 
 const keys = {};
@@ -1793,6 +1898,7 @@ window.addEventListener("keydown", (e) => {
     document.getElementById("center").classList.add("hidden");
     seedTurrets();
     startEngine();
+    startMusic();
     sfxR2Bleep();              // R2 chirps as you launch
   }
   if (e.code === "KeyM" && !e.repeat) { audioOn = !audioOn; if (masterGain) masterGain.gain.value = audioOn ? 0.45 : 0; }
@@ -1802,6 +1908,7 @@ window.addEventListener("keydown", (e) => {
 window.addEventListener("keyup", (e) => { keys[e.code] = false; });
 
 const hudScore = document.getElementById("score");
+const hudCombo = document.getElementById("combo");
 const shieldFill = document.getElementById("shieldfill");
 const dmgFlash = document.getElementById("dmgflash");
 const hudDist = document.getElementById("dist");
@@ -1831,8 +1938,17 @@ function updateReticle() {
   reticle.style.top  = "50%";
   reticle.classList.remove("locked");
 }
+function comboMult() { return Math.min(5, 1 + Math.floor(state.combo / 2)); }
+function scoreKill(base) {                 // award a kill with the streak multiplier
+  state.combo += 1;
+  state.comboTimer = 3.0;
+  state.score += Math.round(base * comboMult());
+}
+function addShake(amt) { state.camShake = Math.min(1.4, state.camShake + amt); }
 function setHUD() {
   hudScore.textContent = state.score;
+  const m = comboMult();
+  hudCombo.textContent = (state.combo > 0 && m > 1) ? "x" + m : "";
   const pct = Math.max(0, Math.min(100, state.shields));
   shieldFill.style.width = pct + "%";
   shieldFill.parentElement.classList.toggle("low", pct > 0 && pct <= 25);  // pulse when low
@@ -1841,7 +1957,7 @@ function setHUD() {
 }
 
 function restart() {
-  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves, surfaceTurrets, megaTurrets, bobaMissiles, cameos]) {
+  for (const arr of [playerShots, enemyShots, debris, turrets, flashes, trenchTies, empWaves, surfaceTurrets, megaTurrets, bobaMissiles, cameos, pickups]) {
     for (const o of arr) scene.remove(o);
     arr.length = 0;
   }
@@ -1852,9 +1968,12 @@ function restart() {
   state.bossActive = false; state.bossDone = false; state.curSpeed = 1.0;
   state.bobaActive = false; state.bobaDone = false; state.bobaTimer = 0;
   state.nextCameoDist = 350;
+  state.combo = 0; state.comboTimer = 0; state.camShake = 0;
+  state.nextPickupDist = 550; state.warnedBoss = false; state.warnedBoba = false;
   bossEl.classList.add("hidden"); bobaEl.classList.add("hidden");
   bannerEl.style.opacity = "0"; bannerTimer = 0; bossDimEl.style.opacity = "0";
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.04, actx.currentTime + 0.4);  // engine back up
+  startMusic();
   xwing.position.set(0, 0, 3);
   xwing.visible = true;
   document.getElementById("center").classList.add("hidden");
@@ -1895,7 +2014,7 @@ function update(dt) {
       spawnSparks(cp, 1);
     }
     dmgFlash.style.opacity = "0.85";          // red edge flash while scraping
-    state.shields -= 12.8 * dt;
+    state.shields -= 12.8 * dt; addShake(0.14);
     state.scrapeSnd -= dt;
     if (state.scrapeSnd <= 0) { sfxScrape(); state.scrapeSnd = 0.09; }
     if (state.shields <= 0) { gameOver(); return; }
@@ -1910,6 +2029,9 @@ function update(dt) {
   // ambient R2 chirps now and then
   state.bleepTimer -= dt;
   if (state.bleepTimer <= 0) { sfxR2Bleep(); state.bleepTimer = 7 + Math.random() * 9; }
+
+  // kill-streak decay
+  if (state.comboTimer > 0) { state.comboTimer -= dt; if (state.comboTimer <= 0) state.combo = 0; }
 
   // boost
   const boosting = keys["ShiftLeft"] || keys["ShiftRight"];
@@ -1926,6 +2048,9 @@ function update(dt) {
   camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, 0.12);
   camera.updateProjectionMatrix();
 
+  // telegraph the bosses ~250m out
+  if (!state.warnedBoss && !state.bossDone && state.dist >= state.bossDist - 250) { state.warnedBoss = true; bannerFlash("WARNING"); }
+  if (!state.warnedBoba && !state.bobaDone && state.dist >= state.bobaDist - 250) { state.warnedBoba = true; bannerFlash("WARNING"); }
   // boss encounters: the world eases to a crawl while a boss is up
   if (!state.bossActive && !state.bossDone && state.dist >= state.bossDist) startBoss();
   if (!state.bobaActive && !state.bobaDone && state.dist >= state.bobaDist) startBoba();
@@ -1962,13 +2087,13 @@ function update(dt) {
     // distance-based turret spawner - evenly spaced, appears within view range
     if (state.dist >= state.nextTurretDist) {
       spawnTurret(-300 + (Math.random() - 0.5) * 50);
-      state.nextTurretDist = state.dist + 240 + Math.random() * 90;
+      state.nextTurretDist = state.dist + (state.bobaDone ? 150 : 240) + Math.random() * 90;   // denser after Boba
     }
 
     // occasional attacking TIE that strafes down the trench at you
     if (state.dist >= state.nextTieDist) {
       spawnTrenchTie();
-      state.nextTieDist = state.dist + 900 + Math.random() * 700;
+      state.nextTieDist = state.dist + (state.bobaDone ? 520 : 900) + Math.random() * 600;
     }
 
     // occasional TIE diving in from the sky for a strafing run
@@ -1987,6 +2112,12 @@ function update(dt) {
     if (state.dist >= state.nextCameoDist) {
       spawnCameo();
       state.nextCameoDist = state.dist + 900 + Math.random() * 1500;
+    }
+
+    // shield + EMP pickups to grab
+    if (state.dist >= state.nextPickupDist) {
+      spawnPickup();
+      state.nextPickupDist = state.dist + 700 + Math.random() * 500;
     }
   }
 
@@ -2041,7 +2172,7 @@ function update(dt) {
       explode(tie.position, 0x88d8ff, 26, 1.4);
       sfxExplosion(false);
       scene.remove(tie); trenchTies.splice(i, 1);
-      state.shields -= 17.6;
+      state.shields -= 17.6; state.combo = 0; addShake(0.65);
       explode(xwing.position, 0xff3344, 8, 1);
       if (state.shields <= 0) gameOver();
       continue;
@@ -2083,6 +2214,8 @@ function update(dt) {
       if (t.userData.fireCool <= 0) { fireSurfaceTurret(t, aim); t.userData.fireCool = 0.6 + Math.random() * 1.4; }
     }
   }
+
+  updatePickups(dt, scroll);
 
   // mega turret boss - hold station, track the player and pound away
   if (state.bossActive) {
@@ -2129,7 +2262,7 @@ function update(dt) {
     if (m.position.distanceTo(xwing.position) < 1.9) {
       explode(m.position, 0xffaa33, 30, 1.8); sfxExplosion(true);
       if (state.alive) {
-        state.shields -= 24; dmgFlash.style.opacity = "0.95";
+        state.shields -= 24; state.combo = 0; addShake(0.95); dmgFlash.style.opacity = "0.95";
         if (state.shields <= 0) gameOver();
       }
       gone = true;
@@ -2176,7 +2309,7 @@ function update(dt) {
         scene.remove(s); playerShots.splice(i, 1); consumed = true;
         explode(m.position, 0xffaa33, 18, 1.2); sfxExplosion(false);
         scene.remove(m); bobaMissiles.splice(j, 1);
-        state.score += 50;
+        scoreKill(50);
         break;
       }
     }
@@ -2192,7 +2325,7 @@ function update(dt) {
           explode(t.userData.aimWorld, 0xff5522, 30, 1.6);
           sfxExplosion(true);
           scene.remove(t); turrets.splice(j, 1);
-          state.score += 100;
+          scoreKill(100);
         } else {
           explode(t.userData.aimWorld, 0xffee66, 8, 0.9);
         }
@@ -2210,7 +2343,7 @@ function update(dt) {
           explode(tie.position, 0x88d8ff, 16, 1.1);
           sfxExplosion(false);
           scene.remove(tie); trenchTies.splice(j, 1);
-          state.score += 150;
+          scoreKill(150);
         } else {
           explode(tie.position, 0xffee66, 6, 0.8);
         }
@@ -2228,7 +2361,7 @@ function update(dt) {
           explode(rt.userData.aimWorld, 0x88d8ff, 16, 1.2);
           sfxExplosion(true);
           scene.remove(rt); surfaceTurrets.splice(j, 1);
-          state.score += rt.userData.hostile ? 100 : 25;
+          scoreKill(rt.userData.hostile ? 100 : 25);
         } else {
           explode(rt.userData.aimWorld, 0xffee66, 6, 0.9);
         }
@@ -2247,7 +2380,7 @@ function update(dt) {
     if (s.position.distanceTo(xwing.position) < 1.6) {
       scene.remove(s); enemyShots.splice(i, 1);
       if (!state.alive) continue;           // already destroyed this frame - don't re-flash the border
-      state.shields -= 9.6;
+      state.shields -= 9.6; state.combo = 0; addShake(0.35);
       explode(xwing.position, 0xff3344, 6);
       sfxExplosion(false);
       dmgFlash.style.opacity = "0.9";       // red flash on taking a hit
@@ -2292,6 +2425,14 @@ function update(dt) {
   camera.position.y = THREE.MathUtils.lerp(camera.position.y, xwing.position.y * 0.6 + 3.0, 0.1);
   camera.position.z = THREE.MathUtils.lerp(camera.position.z, xwing.position.z + 9, 0.1);
   camera.lookAt(xwing.position.x * 0.4, xwing.position.y * 0.4, xwing.position.z - 16);
+  // screen shake - jitter the view (rotation only, so it never corrupts the position lerp)
+  if (state.camShake > 0.001) {
+    const s = state.camShake;
+    camera.rotation.z += (Math.random() - 0.5) * s * 0.07;
+    camera.rotation.x += (Math.random() - 0.5) * s * 0.05;
+    camera.rotation.y += (Math.random() - 0.5) * s * 0.05;
+    state.camShake *= 0.86;
+  }
 
   updateReticle();
   setHUD();
@@ -2329,6 +2470,7 @@ function gameOver() {
   sfxExplosion(true);
   setTimeout(sfxR2Sad, 350);   // R2's mournful warble after the boom
   if (engine && actx) engine.g.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.4);  // engine dies
+  stopMusic();
   xwing.visible = false;
   dmgFlash.style.opacity = "0";   // clear the red damage border on death
   bossEl.classList.add("hidden"); // drop the boss readouts if we died mid-duel
@@ -2356,6 +2498,7 @@ function loop() {
   update(dt);
   updateSkyBattle(dt);     // background dogfight runs always
   updateCameos(dt);        // joke fly-bys finish crossing even on menus
+  updateMusic();           // schedule the next slice of the music bed
   composer.render();
   requestAnimationFrame(loop);
 }
